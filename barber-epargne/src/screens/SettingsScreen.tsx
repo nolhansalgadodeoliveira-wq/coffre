@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import type { ScreenProps } from '../App'
 import { nowIso } from '../App'
-import { formatDayYear, todayIso, WEEK_ORDER, WEEKDAY_LONG, WEEKDAY_SHORT } from '../lib/dates'
+import { formatDayYear, monthKeyOf, todayIso, WEEK_ORDER, WEEKDAY_LONG, WEEKDAY_SHORT } from '../lib/dates'
 import { centsToInput, formatEurosShort, parseEuros } from '../lib/money'
 import { download, toCsv } from '../lib/storage'
-import { changeWorkdays, expenseCategories, incomeCategories, tracksExpenses } from '../lib/calc'
+import { changeWorkdays, expenseCategories, availableSavings, incomeCategories, tracksExpenses } from '../lib/calc'
 import { BARBER, findProfession } from '../lib/professions'
 import type { Settings } from '../lib/types'
 import { EMPTY_DATA } from '../lib/types'
@@ -73,6 +73,8 @@ export default function SettingsScreen({ data, update, account, sync, open }: Sc
           <input id="name" autoComplete="given-name" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} maxLength={40} />
         </Field>
       </Card>
+
+      <SavedSection data={data} update={update} today={todayIso()} />
 
       <Card className="flex flex-col gap-3">
         <span className="text-[1.1875rem] font-semibold">Mon métier</span>
@@ -214,5 +216,53 @@ export default function SettingsScreen({ data, update, account, sync, open }: Sc
         Effacer toutes les données
       </DangerButton>
     </Screen>
+  )
+}
+
+/** « Combien as-tu déjà coffré ? » : remplace le calcul automatique par le vrai montant, que la personne connaît. */
+function SavedSection({ data, update, today }: Pick<ScreenProps, 'data' | 'update' | 'today'>) {
+  const base = data.settings.savedBaseline
+  // Le même montant que « Déjà de côté » sur l'accueil (objectifs réalisés déduits).
+  const current = availableSavings(data, today)
+  const [text, setText] = useState('')
+  const [message, setMessage] = useState<{ text: string; bad?: boolean } | null>(null)
+
+  function save() {
+    const cents = parseEuros(text)
+    if (cents === null || text.trim() === '') return setMessage({ text: 'Indique le montant que tu as déjà coffré (0 si rien).', bad: true })
+    update((d) => ({ ...d, settings: { ...d.settings, savedBaseline: { amount: cents, month: monthKeyOf(today), at: nowIso() }, updatedAt: nowIso() } }))
+    setText('')
+    setMessage({ text: `C’est noté : ${formatEurosShort(cents)} de côté. Ce que tu gagnes à partir de maintenant s’ajoutera automatiquement (la fin de ce mois, puis chaque mois terminé).` })
+  }
+
+  return (
+    <Card tone="orange" className="flex flex-col gap-4">
+      <span className="text-[1.1875rem] font-semibold">Combien as-tu déjà coffré ?</span>
+      <p className="text-[0.9375rem] text-ink/85">
+        L’app calcule ce montant d’après tes journées. Si tu connais la somme exacte que tu as vraiment mise de côté, saisis-la : elle remplace le calcul.
+      </p>
+      <p className="flex items-baseline justify-between gap-3 rounded-2xl bg-white/60 p-3 text-[0.9375rem]">
+        <span>{base ? 'Montant retenu' : 'Calculé par l’app'}</span>
+        <strong className="num text-[1.25rem]">{formatEurosShort(current)}</strong>
+      </p>
+      <Field label="Le montant exact déjà coffré" htmlFor="savedNow" hint="Tout ce que tu as mis de côté jusqu’à aujourd’hui.">
+        <MoneyInput id="savedNow" value={text} onChange={setText} placeholder={centsToInput(current)} onTone />
+      </Field>
+      {message && <Notice bad={message.bad}>{message.text}</Notice>}
+      <PrimaryButton onClick={save} icon={<IconCheck size={20} />}>
+        Enregistrer ce montant
+      </PrimaryButton>
+      {base && (
+        <SecondaryButton
+          onClick={() => {
+            update((d) => ({ ...d, settings: { ...d.settings, savedBaseline: undefined, updatedAt: nowIso() } }))
+            setMessage({ text: 'Retour au calcul automatique.' })
+          }}
+        >
+          Revenir au calcul automatique
+        </SecondaryButton>
+      )}
+      <p className="text-[0.8125rem] text-ink/80">Tes objectifs utilisent ce montant. Les estimations (« dans les temps »…) ne se fondent que sur les journées saisies après : il en faut 4 pour qu’elles réapparaissent.</p>
+    </Card>
   )
 }

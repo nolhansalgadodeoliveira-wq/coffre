@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ScreenProps } from '../App'
 import { nowIso } from '../App'
 import { loadPrefs } from '../lib/push'
-import { autoSaved, averageMonthlyCosts, costsOfMonth, tracksExpenses, trackingStart, bilanFigures, dailyAverage, dayStatus, entriesOfMonth, goalsPlan, MIN_DAYS_FOR_ESTIMATE, monthProjection, monthsWithData, monthSummary, nextGoal, pendingDays, plannedDaysOfMonth, plural } from '../lib/calc'
+import { autoSaved, estimateEntries, averageMonthlyCosts, costsOfMonth, tracksExpenses, trackingStart, dailyAverage, dayStatus, entriesOfMonth, goalsPlan, MIN_DAYS_FOR_ESTIMATE, monthProjection, monthsWithData, monthSummary, nextGoal, pendingDays, plannedDaysOfMonth, plural } from '../lib/calc'
 import { addDays, addMonths, datesOfMonth, formatDay, formatDayLong, mondayOf, monthKeyOf, monthName, weekday, WEEKDAY_SHORT } from '../lib/dates'
 import { formatEuros, formatEurosShort, formatSigned } from '../lib/money'
 import { backupDue, lastBackupAt, saveBackupFile } from '../lib/backup'
@@ -57,7 +57,7 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
   // Vérification du mois dernier : une seule question au lieu d'un bilan complet.
   const prev = addMonths(cur, -1)
   const prevExpected = autoSaved(data, prev)
-  const showCheck = !checkClosed && monthsWithData(data).includes(prev) && !data.bilans.some((b) => b.month === prev) && !checkHidden(prev)
+  const showCheck = !checkClosed && !(s.savedBaseline && prev <= s.savedBaseline.month) && monthsWithData(data).includes(prev) && !data.bilans.some((b) => b.month === prev) && !checkHidden(prev)
   function confirmPrev() {
     const total = entriesOfMonth(data, prev).reduce((a, e) => a + e.amount, 0)
     const stamp = nowIso()
@@ -91,12 +91,16 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
   // Fin du mois estimée à ce rythme (mois en cours ou à venir).
   const est = month >= cur && data.entries.length > 0 ? monthProjection(data, month, today, avg) : null
   // Épargne d'un mois terminé : bilan s'il existe, sinon calcul automatique.
-  const monthSaved = month < cur && sum.hasData ? (sum.bilan ? sum.bilan.actual : bilanFigures(sum.total, s.personalExpenses, s.commission).expected) : null
+  // Mois couvert par le montant déjà coffré (saisi à la main) : son épargne y est comprise.
+  const base = s.savedBaseline
+  const coveredByBase = !!base && month <= base.month
+  const monthSaved = month < cur && sum.hasData && !coveredByBase ? (sum.bilan ? sum.bilan.actual : autoSaved(data, month)) : null
 
   // Le rappel de fichier de sauvegarde ne sert que si la copie en ligne ne passe pas.
   const showBackup = !backupHidden && !sync.lastSyncAt && backupDue(data, lastBackupAt())
   const enough = plan.enoughData
-  const missingDays = Math.max(0, MIN_DAYS_FOR_ESTIMATE - data.entries.filter((e) => e.date <= today).length)
+  // Les estimations ne se fondent que sur les journées d'après le montant déjà coffré (s'il y en a un).
+  const missingDays = Math.max(0, MIN_DAYS_FOR_ESTIMATE - estimateEntries(data, today).length)
 
   // Jours à montrer dans la bande : jours prévus ou saisis du mois.
   const strip = datesOfMonth(month).filter((d) => dayStatus(data, d) !== 'repos' || entries.some((e) => e.date === d))
@@ -317,6 +321,11 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
             <button type="button" onClick={() => open({ kind: 'resume', period: 'mois', key: month })} className="h-11 self-start rounded-full bg-white/60 px-4 text-[0.9375rem] font-semibold active:scale-95">
               Résumé de {name}
             </button>
+          )}
+          {coveredByBase && base && month < cur && sum.hasData && (
+            <p className="rounded-2xl bg-white/55 p-3 text-[0.875rem]">
+              Son épargne est comprise dans ton montant déjà coffré ({formatEurosShort(base.amount)}).
+            </p>
           )}
           {monthSaved !== null && (
             <button type="button" onClick={() => (sum.bilan ? open({ kind: 'bilan', bilanId: sum.bilan.id }) : open({ kind: 'bilan', month }))} className="flex items-center justify-between gap-3 rounded-2xl bg-white/55 p-3 text-left text-[0.875rem]">

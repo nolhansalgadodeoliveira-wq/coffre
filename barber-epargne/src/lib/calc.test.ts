@@ -24,6 +24,11 @@ import {
   validateEntry,
   workedDaysInMonth,
   changeWorkdays,
+  computedSaved,
+  totalSaved,
+  availableSavings,
+  enoughForEstimate,
+  estimateEntries,
   entryKeepPct,
 } from './calc'
 import { addDays, addMonths, deMonth, formatDayLong, formatWeekRange, lastDayOfMonth, mondayOf, saturdayOf, weekday } from './dates'
@@ -487,5 +492,77 @@ describe('part gardée par journée', () => {
     expect(entryKeepPct({ ...base, gross: 25500, amount: 10200 }, 50)).toBe(40)
     expect(entryKeepPct({ ...base, gross: 27500, amount: 11000 + 2500, tips: 2500 }, 50)).toBe(40)
     expect(entryKeepPct({ ...base, gross: 0, amount: 0 }, 50)).toBe(50)
+  })
+})
+
+describe('montant déjà coffré saisi à la main', () => {
+  const today = '2026-11-19'
+  const base = () => data({ entries: [e('2026-08-08', 1000), e('2026-09-05', 1000), e('2026-10-03', 1000)], bilans: [bilan('2026-10', 900)] })
+  it('remplace le calcul pour les mois jusqu’au mois de la saisie', () => {
+    expect(totalSaved(base(), today)).toBe(70000 + 70000 + 90000)
+    const d = base()
+    d.settings.savedBaseline = { amount: 150000, month: '2026-11' }
+    expect(totalSaved(d, today)).toBe(150000)
+    expect(computedSaved(d, today)).toBe(230000)
+  })
+  it('les mois suivants s’ajoutent automatiquement', () => {
+    const d = data({ entries: [e('2026-10-03', 1000), e('2026-11-14', 1000), e('2026-12-05', 1000)], settings: { savedBaseline: { amount: 100000, month: '2026-10' } } })
+    // Novembre (terminé le 1er décembre) : 1 000 − 300 = 700 ; décembre pas encore terminé.
+    expect(totalSaved(d, '2026-12-02')).toBe(100000 + 70000)
+  })
+})
+
+describe('montant déjà coffré : cohérence de tous les calculs', () => {
+  const at = '2026-11-20T15:00:00.000Z'
+  const later = '2026-11-20T21:00:00.000Z'
+  const earlier = '2026-11-20T09:00:00.000Z'
+  const withBase = (extra: Partial<AppData> = {}, settings: TestSettings = {}) =>
+    data({ ...extra, settings: { savedBaseline: { amount: 200000, month: '2026-11', at }, ...settings } })
+  const ent = (date: string, euros: number, updatedAt = T): Entry => ({ ...e(date, euros), updatedAt })
+
+  it('la fin du mois de la saisie s’ajoute une fois le mois terminé (dépenses perso au prorata)', () => {
+    const d = withBase({ entries: [ent('2026-11-14', 300), ent('2026-11-21', 200), ent('2026-11-28', 200)] })
+    // Pendant le mois : seul le montant saisi compte.
+    expect(totalSaved(d, '2026-11-25')).toBe(200000)
+    // Le mois fini : + (400 € gagnés après le 20) − 300 € × 10/30 jours restants.
+    expect(totalSaved(d, '2026-12-02')).toBe(200000 + 40000 - 10000)
+  })
+
+  it('le jour de la saisie : une journée saisie après compte, une journée saisie avant non', () => {
+    const d = withBase({ entries: [ent('2026-11-20', 100, earlier)] })
+    expect(estimateEntries(d, '2026-11-20')).toHaveLength(0)
+    const d2 = withBase({ entries: [ent('2026-11-20', 100, later)] })
+    expect(estimateEntries(d2, '2026-11-20')).toHaveLength(1)
+  })
+
+  it('les estimations ne se fondent que sur les journées d’après la saisie', () => {
+    const old = [ent('2026-11-07', 900), ent('2026-11-08', 900), ent('2026-11-14', 900), ent('2026-11-15', 900)]
+    const d = withBase({ entries: old })
+    expect(enoughForEstimate(d, '2026-11-25')).toBe(false)
+    expect(dailyAverage(d, '2026-11-25')).toBe(0)
+    const d2 = withBase({ entries: [...old, ent('2026-11-21', 100), ent('2026-11-22', 100), ent('2026-11-28', 100), ent('2026-11-29', 100)] })
+    expect(enoughForEstimate(d2, '2026-11-30')).toBe(true)
+    expect(dailyAverage(d2, '2026-11-30')).toBe(10000)
+  })
+
+  it('l’estimation d’un objectif ne compte pas deux fois le début du mois de la saisie', () => {
+    const entries = [ent('2026-11-07', 500), ent('2026-11-08', 500), ent('2026-11-21', 100), ent('2026-11-22', 100), ent('2026-11-28', 100), ent('2026-11-29', 100)]
+    const d = withBase({ entries }, { goalAmount: 800000, goalDate: '2026-12-01' })
+    const p = projection(d, '2026-11-30')
+    // Novembre : seuls les 400 € gagnés après le 20 comptent, moins 300 € × 10/30.
+    expect(p.months.map((m) => m.month)).toEqual(['2026-11'])
+    expect(p.months[0].entered).toBe(40000)
+    expect(p.projected).toBe(200000 + 40000 - 10000)
+  })
+
+  it('un objectif réalisé AVANT la saisie n’est pas retiré une deuxième fois ; après, oui', () => {
+    const goal = (id: string, doneAt: string): Goal => ({ id, name: id, emoji: '🎯', amount: 50000, date: '2026-11-10', createdAt: T, done: { at: doneAt, spent: 50000 } })
+    expect(availableSavings(withBase({}, { goals: [goal('ski', '2026-11-10T10:00:00.000Z')] }), '2026-11-25')).toBe(200000)
+    expect(availableSavings(withBase({}, { goals: [goal('ski', '2026-11-22T10:00:00.000Z')] }), '2026-11-25')).toBe(150000)
+  })
+
+  it('la moyenne d’épargne des derniers mois ignore les mois couverts par le montant saisi', () => {
+    const d = data({ entries: [e('2026-09-05', 1000), e('2026-10-03', 2000)], settings: { savedBaseline: { amount: 100000, month: '2026-09', at: '2026-09-30T20:00:00.000Z' }, goalAmount: 800000 } })
+    expect(goalsPlan(d, '2026-11-19').avgSavedPerMonth).toBe(200000 - 30000)
   })
 })

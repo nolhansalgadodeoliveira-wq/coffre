@@ -56,7 +56,7 @@ export function compliments(data: AppData, today: string): Compliment[] {
         weight: 95,
       })
   }
-  if (plan.goals.length > 0 && plan.goals.every((g) => g.onTrack || g.reached) && s.dayCount >= 4 && !plan.goals.some((g) => g.passed))
+  if (plan.goals.length > 0 && plan.goals.every((g) => g.onTrack || g.reached) && plan.enoughData && !plan.goals.some((g) => g.passed))
     out.push({ key: `en-route:${today.slice(0, 7)}`, title: 'Tu es sur la bonne voie', text: plan.goals.length > 1 ? 'À ce rythme, tu atteins tous tes objectifs à temps.' : 'À ce rythme, tu atteins ton objectif à temps.', weight: 60 })
 
   return out.sort((a, b) => b.weight - a.weight)

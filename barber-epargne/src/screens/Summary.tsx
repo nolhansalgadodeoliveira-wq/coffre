@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ScreenProps } from '../App'
-import { autoSaved, categoryTotals, costsOfMonth, entriesOfMonth, expenseCategories, expenseTotals, expensesOfMonth, goalsPlan, incomeCategories, OTHER_COLOR, tracksExpenses, type CategoryView } from '../lib/calc'
+import { autoSaved, baselineDay, savedAfterBaseline, categoryTotals, costsOfMonth, entriesOfMonth, expenseCategories, expenseTotals, expensesOfMonth, goalsPlan, incomeCategories, OTHER_COLOR, tracksExpenses, type CategoryView } from '../lib/calc'
 import { addMonths, formatDayLong, formatMonthKey, monthKeyOf } from '../lib/dates'
 import { formatEurosShort } from '../lib/money'
 import type { AppData, Entry } from '../lib/types'
@@ -32,7 +32,12 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 const sum = (l: Entry[]) => l.reduce((a, e) => a + e.amount, 0)
 
 function savedOf(data: AppData, month: string, cur: string): number | null {
-  if (month >= cur || entriesOfMonth(data, month).length === 0) return null
+  if (month >= cur) return null
+  const base = data.settings.savedBaseline
+  // Mois couverts par le montant déjà coffré : pas de détail (le mois de la saisie : seulement la suite du mois).
+  if (base && month < base.month) return null
+  if (base && month === base.month) return savedAfterBaseline(data, month, baselineDay(data)!)
+  if (entriesOfMonth(data, month).length === 0) return null
   return data.bilans.find((b) => b.month === month)?.actual ?? autoSaved(data, month)
 }
 
@@ -169,6 +174,11 @@ export default function Summary({ data, today, close, period: initialPeriod, per
           <Stat label="Encaissé (pourboires compris)" value={money(f.gross)} />
           <Stat label={period === 'mois' ? 'Mis de côté' : 'Mis de côté (mois terminés)'} value={f.saved === null ? 'en cours' : money(f.saved)} />
         </div>
+        {data.settings.savedBaseline && (period === 'mois' ? key <= data.settings.savedBaseline.month : key <= data.settings.savedBaseline.month.slice(0, 4)) && (
+          <p className="rounded-2xl bg-white/60 p-3 text-[0.875rem]">
+            Ton montant déjà coffré ({money(data.settings.savedBaseline.amount)}, saisi à la main) couvre {period === 'mois' && key < data.settings.savedBaseline.month ? 'ce mois' : 'cette période jusqu’à sa saisie'} : il n’est pas détaillé mois par mois.
+          </p>
+        )}
         {f.best && (
           <p className="text-[0.9375rem]">
             Meilleure journée : <strong>{money(f.best.amount)}</strong>, {formatDayLong(f.best.date)}

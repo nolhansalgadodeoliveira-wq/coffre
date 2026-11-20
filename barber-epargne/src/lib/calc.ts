@@ -329,13 +329,57 @@ export function autoSaved(data: AppData, month: string): number {
  * (ta part − dépenses perso − frais). Si tu as fait le bilan d'un mois, c'est le montant réel du bilan qui compte.
  * Le mois en cours n'est pas encore compté : il apparaît dans l'estimation.
  */
+/** Jour de la saisie du montant déjà coffré (AAAA-MM-JJ) ; les journées de ce jour-là y sont comprises. */
+export function baselineDay(data: AppData): string | null {
+  const b = data.settings.savedBaseline
+  if (!b) return null
+  // Sans heure de saisie (ancienne version) : le montant couvre tout son mois.
+  return b.at ? b.at.slice(0, 10) : lastDayOfMonth(b.month)
+}
+
+/**
+ * Une journée ou une dépense est-elle postérieure à la saisie du montant déjà coffré ?
+ * Un jour après la saisie : oui. Le jour même : seulement si elle a été saisie après (journée finie le soir…).
+ */
+export function afterBaseline(data: AppData, x: { date: string; updatedAt: string }): boolean {
+  const b = data.settings.savedBaseline
+  if (!b) return true
+  const day = baselineDay(data)!
+  return x.date > day || (x.date === day && !!b.at && x.updatedAt > b.at)
+}
+
+/**
+ * Épargne du mois de la saisie APRÈS la saisie : ce qui a été gagné ensuite, moins les dépenses d'après,
+ * moins les dépenses perso et les frais fixes au prorata des jours restants.
+ */
+export function savedAfterBaseline(data: AppData, month: string, fromDay: string): number {
+  const all = datesOfMonth(month)
+  const fraction = all.length ? all.filter((d) => d > fromDay).length / all.length : 0
+  const share = sum(entriesOfMonth(data, month).filter((e) => afterBaseline(data, e)))
+  const costs = expensesOfMonth(data, month)
+    .filter((x) => afterBaseline(data, x))
+    .reduce((a, x) => a + x.amount, 0)
+  const c = data.settings.commission
+  const commission = c.mode === 'fixed' ? { ...c, value: Math.round(c.value * fraction) } : c
+  return bilanFigures(Math.max(0, share - costs), Math.round(data.settings.personalExpenses * fraction), commission).expected
+}
+
 export function totalSaved(data: AppData, today: string): number {
   const cur = monthKeyOf(today)
+  const base = data.settings.savedBaseline
   const billed = new Map(data.bilans.map((b) => [b.month, b.actual]))
-  let total = 0
-  for (const b of data.bilans) total += b.actual
-  for (const m of monthsWithData(data)) if (m < cur && !billed.has(m)) total += autoSaved(data, m)
+  // Montant saisi à la main : il remplace tout ce qui précède ; la fin du mois de la saisie et les mois suivants s'ajoutent.
+  const counted = (m: string) => !base || m > base.month
+  let total = base?.amount ?? 0
+  for (const b of data.bilans) if (counted(b.month)) total += b.actual
+  for (const m of monthsWithData(data)) if (m < cur && counted(m) && !billed.has(m)) total += autoSaved(data, m)
+  if (base && base.month < cur) total += savedAfterBaseline(data, base.month, baselineDay(data)!)
   return total
+}
+
+/** Montant calculé par l'app, sans tenir compte d'un montant saisi à la main. */
+export function computedSaved(data: AppData, today: string): number {
+  return totalSaved({ ...data, settings: { ...data.settings, savedBaseline: undefined } }, today)
 }
 
 // ---------- Projection ----------
@@ -345,8 +389,19 @@ export function totalSaved(data: AppData, today: string): number {
 // Les jours déjà saisis gardent leur vrai montant. Ensuite, chaque mois, on retire les dépenses perso et les frais du salon.
 
 /** Gain moyen par jour travaillé : moyenne des journées saisies sur les 60 derniers jours (toutes, s'il n'y en a pas de récentes). */
+/**
+ * Journées sur lesquelles se fondent les estimations : celles saisies jusqu'à aujourd'hui, et seulement celles
+ * d'après la saisie du montant déjà coffré s'il y en a un (les anciennes peuvent contenir des erreurs de saisie).
+ */
+export function estimateEntries(data: AppData, today: string): Entry[] {
+  return data.entries.filter((e) => e.date <= today && afterBaseline(data, e))
+}
+
+/** Assez de journées pour estimer (« dans les temps », fin de mois…) sans annoncer n'importe quoi. */
+export const enoughForEstimate = (data: AppData, today: string) => estimateEntries(data, today).length >= MIN_DAYS_FOR_ESTIMATE
+
 export function dailyAverage(data: AppData, today: string): number {
-  const past = data.entries.filter((e) => e.date <= today)
+  const past = estimateEntries(data, today)
   const recent = past.filter((e) => daysBetween(e.date, today) < 60)
   const pool = recent.length > 0 ? recent : past
   return pool.length ? Math.round(pool.reduce((s, e) => s + e.amount, 0) / pool.length) : 0
@@ -377,12 +432,15 @@ export interface MonthProjection {
  * compte pour le gain moyen. Un mois passé n'est jamais « inventé » : on garde ce qui a été saisi.
  * `until` : date de l'objectif (exclue), pour le dernier mois.
  */
-export function monthProjection(data: AppData, month: string, today: string, avg: number, until?: string): MonthProjection {
+export function monthProjection(data: AppData, month: string, today: string, avg: number, until?: string, from?: string): MonthProjection {
   const all = datesOfMonth(month)
-  const days = until ? all.filter((d) => d < until) : all
+  // `from` : seuls les jours APRÈS cette date comptent (mois de la saisie du montant déjà coffré).
+  const days = all.filter((d) => (!until || d < until) && (!from || d > from))
   const fraction = all.length ? days.length / all.length : 0
   const inPeriod = new Set(days)
-  const entries = entriesOfMonth(data, month).filter((e) => inPeriod.has(e.date))
+  // Jour de la saisie : ses journées saisies après comptent aussi.
+  const inScope = (x: { date: string; updatedAt: string }) => inPeriod.has(x.date) || (!!from && x.date === from && afterBaseline(data, x))
+  const entries = entriesOfMonth(data, month).filter(inScope)
   const have = new Set(entries.map((e) => e.date))
   const entered = sum(entries)
   const assumeThisMonth = month >= monthKeyOf(today)
@@ -392,7 +450,9 @@ export function monthProjection(data: AppData, month: string, today: string, avg
   const assumed = missing.length * avg
   const total = entered + assumed
   // Dépenses professionnelles : réelles pour un mois passé ; au moins la moyenne habituelle pour le mois en cours et à venir.
-  const actualCosts = costsOfMonth(data, month)
+  const actualCosts = expensesOfMonth(data, month)
+    .filter(inScope)
+    .reduce((a, x) => a + x.amount, 0)
   const costs = assumeThisMonth ? Math.max(actualCosts, Math.round(averageMonthlyCosts(data, today) * fraction)) : actualCosts
   const c = data.settings.commission
   const commission = !c.enabled || c.value <= 0 ? 0 : Math.min(total, c.mode === 'percent' ? Math.round((total * Math.min(c.value, 100)) / 100) : Math.round(c.value * fraction))
@@ -442,7 +502,10 @@ export function activeGoals(data: AppData): Goal[] {
 
 /** Argent déjà utilisé pour des objectifs réalisés (il ne fait plus partie de l'épargne). */
 export function spentOnGoals(data: AppData): number {
-  return data.settings.goals.reduce((s, g) => s + (g.done?.spent ?? 0), 0)
+  // Un objectif réalisé AVANT la saisie du montant déjà coffré est déjà déduit de ce montant : on ne le retire pas deux fois.
+  const at = data.settings.savedBaseline?.at
+  const base = data.settings.savedBaseline
+  return data.settings.goals.reduce((s, g) => s + (g.done && (!base || (at ? g.done.at > at : g.done.at.slice(0, 7) > base.month)) ? g.done.spent : 0), 0)
 }
 
 /** Épargne disponible : déjà mis de côté − ce qui a été utilisé pour des objectifs réalisés. */
@@ -477,7 +540,9 @@ export function projection(data: AppData, today: string, target = defaultTarget(
     for (let m = first; m <= goalMonth; m = addMonths(m, 1)) {
       if (billed.has(m)) continue
       if (m < cur && entriesOfMonth(data, m).length === 0) continue
-      const mp = monthProjection(data, m, today, avg, m === goalMonth ? goalDate : undefined)
+      // Mois de la saisie du montant déjà coffré : seule la suite du mois s'ajoute (le début est compris dans le montant).
+      const from = data.settings.savedBaseline?.month === m ? (baselineDay(data) ?? undefined) : undefined
+      const mp = monthProjection(data, m, today, avg, m === goalMonth ? goalDate : undefined, from)
       if (mp.fraction > 0) months.push(mp)
     }
   }
@@ -586,9 +651,11 @@ export function goalsPlan(data: AppData, today: string): GoalsPlan {
   // Épargne réelle des mois terminés (bilan s'il existe, sinon calcul automatique).
   const cur = monthKeyOf(today)
   const done = monthsWithData(data).filter((m) => m < cur)
-  const avgSavedPerMonth = done.length ? Math.round(done.reduce((s, m) => s + (data.bilans.find((b) => b.month === m)?.actual ?? autoSaved(data, m)), 0) / done.length) : null
+  const baseMonth = data.settings.savedBaseline?.month
+  const real = done.filter((m) => !baseMonth || m > baseMonth)
+  const avgSavedPerMonth = real.length ? Math.round(real.reduce((s, m) => s + (data.bilans.find((b) => b.month === m)?.actual ?? autoSaved(data, m)), 0) / real.length) : null
 
-  return { available, goals: plans, free: pool, perMonth: plans.reduce((s, g) => s + g.perMonth, 0), avgSavedPerMonth, perDay: dailyAverage(data, today), enoughData: data.entries.filter((e) => e.date <= today).length >= MIN_DAYS_FOR_ESTIMATE }
+  return { available, goals: plans, free: pool, perMonth: plans.reduce((s, g) => s + g.perMonth, 0), avgSavedPerMonth, perDay: dailyAverage(data, today), enoughData: enoughForEstimate(data, today) }
 }
 
 /** Objectif le plus proche, pas encore réalisé et dont la date n'est pas passée. */

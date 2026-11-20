@@ -194,6 +194,10 @@ function parseSettings(v: unknown, legacy: boolean): Settings {
     keepPct: typeof s.keepPct === 'number' && s.keepPct > 0 && s.keepPct <= 100 ? s.keepPct : DEFAULT_SETTINGS.keepPct,
     personalExpenses: clampInt(s.personalExpenses, 0, 100_000_00, DEFAULT_SETTINGS.personalExpenses),
     goals: parseGoals(s),
+    ...(() => {
+      const b = s.savedBaseline as Record<string, unknown> | undefined
+      return b && isInt(b.amount) && b.amount >= 0 && b.amount <= MAX_GOAL && isStr(b.month) && /^\d{4}-\d{2}$/.test(b.month) ? { savedBaseline: { amount: b.amount, month: b.month, ...(isStr(b.at) && !Number.isNaN(Date.parse(b.at)) ? { at: b.at } : {}) } } : {}
+    })(),
     ...(isStr((s.profession as Record<string, unknown> | undefined)?.id) && isStr((s.profession as Record<string, unknown>).label)
       ? { profession: { id: String((s.profession as Record<string, unknown>).id).slice(0, 40), label: String((s.profession as Record<string, unknown>).label).slice(0, 60) } }
       : {}),

@@ -95,6 +95,12 @@ export interface Settings {
   /** Catégories de recettes et de dépenses du métier (absentes : celles du barbier). */
   incomeCats?: CategoryDef[]
   expenseCats?: CategoryDef[]
+  /**
+   * Montant déjà coffré, saisi à la main : il remplace le calcul pour tout ce qui précède sa saisie.
+   * `month` (AAAA-MM) : mois de la saisie ; `at` (ISO) : moment de la saisie. Ce qui est gagné APRÈS s'ajoute :
+   * la fin du mois de la saisie (au prorata), puis chaque mois suivant.
+   */
+  savedBaseline?: { amount: number; month: string; at?: string }
   /** Objectifs d'épargne (mariage, ski…). */
   goals: Goal[]
   commission: Commission

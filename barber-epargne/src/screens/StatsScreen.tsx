@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import type { ScreenProps } from '../App'
 import { BarChart, LineChart, type ChartPoint } from '../charts'
-import { dailyAverage, monthProjection, plural, activeGoals, categoryTotals, incomeCategories } from '../lib/calc'
+import { dailyAverage, enoughForEstimate, monthProjection, plural, activeGoals, categoryTotals, incomeCategories } from '../lib/calc'
 import { CategoryBar } from './Summary'
 import { computeStats } from '../lib/stats'
 import { deMonth, formatDayLong, formatMonthKey, formatWeekRange, monthKeyOf, monthName, monthShort, WEEK_ORDER, WEEKDAY_LONG, WEEKDAY_SHORT } from '../lib/dates'
@@ -113,7 +113,7 @@ export default function StatsScreen({ data, today, open }: ScreenProps) {
           line={avg !== null && gains.length > 1 ? { value: avg, label: view === 'mois' ? 'Moyenne par mois' : 'Moyenne par semaine' } : undefined}
         />
         {gains.length < 2 && <p className="rounded-2xl bg-blue-soft p-3 text-[0.875rem]">La courbe se dessine à partir de {view === 'mois' ? '2 mois' : '2 semaines'} de données.</p>}
-        {!billedNow && estimate.entered + estimate.assumed > 0 && (
+        {!billedNow && enoughForEstimate(data, today) && estimate.entered + estimate.assumed > 0 && (
           <p className="rounded-2xl bg-violet-soft p-3 text-[0.9375rem]">
             <strong>{cap(monthName(cur))}</strong> : {formatEuros(estimate.entered)} gagnés pour l’instant, environ <strong>{formatEuros(estimate.total)}</strong> à la fin du mois si tu gagnes {formatEurosShort(dailyAverage(data, today))} chaque jour prévu.
           </p>

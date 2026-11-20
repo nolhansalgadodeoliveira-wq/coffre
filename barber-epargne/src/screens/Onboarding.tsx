@@ -30,6 +30,8 @@ export default function Onboarding({ data, update, replay, done, refresh }: { da
   const [goal, setGoal] = useState(first?.amount ? centsToInput(first.amount) : '')
   const defaultDate = first && first.date > todayIso() ? first.date : `${addMonths(monthKeyOf(todayIso()), 6)}-01`
   const [goalDate, setGoalDate] = useState(defaultDate)
+  // Montant déjà coffré (facultatif) : celui déjà saisi s'il y en a un.
+  const [savedNow, setSavedNow] = useState(s.savedBaseline ? centsToInput(s.savedBaseline.amount) : '')
   const [error, setError] = useState<string | null>(null)
   // Métier : celui déjà choisi (ou barbier pour les comptes d'avant cette option).
   const [choice, setChoice] = useState<ProfessionChoice | null>(() => {
@@ -66,6 +68,8 @@ export default function Onboarding({ data, update, replay, done, refresh }: { da
       const g = goal.trim() === '' ? 0 : parseEuros(goal)
       if (g === null) return setError('Le montant de l’objectif n’est pas valide.')
       if (g > 0 && (!isValidIso(goalDate) || goalDate <= todayIso())) return setError('Choisis une date dans le futur.')
+      const saved = savedNow.trim() === '' ? null : parseEuros(savedNow)
+      if (savedNow.trim() !== '' && saved === null) return setError('Le montant déjà coffré n’est pas valide.')
       const now = nowIso()
       update((d) => {
         const withGoal = g > 0 ? saveGoal(d, { name: goalName.trim() || 'Mon objectif', emoji: emojiFor(goalName), amount: g, date: goalDate }, now, first?.id) : d
@@ -79,6 +83,13 @@ export default function Onboarding({ data, update, replay, done, refresh }: { da
           hoursPerDay: hoursNum,
           keepPct: keepNum,
           ...(choice ? { profession: choice.profession, incomeCats: choice.income, expenseCats: choice.expenses } : {}),
+          // Montant déjà coffré : nouveau ou modifié → noté maintenant ; inchangé → on garde la saisie d'origine ; vidé → retiré.
+          savedBaseline:
+            saved === null
+              ? undefined
+              : withGoal.settings.savedBaseline?.amount === saved
+                ? withGoal.settings.savedBaseline
+                : { amount: saved, month: monthKeyOf(todayIso()), at: now },
           personalExpenses: parseEuros(expenses) ?? d.settings.personalExpenses,
           onboarded: true,
           updatedAt: now,
@@ -235,6 +246,9 @@ export default function Onboarding({ data, update, replay, done, refresh }: { da
             <input id="goalDate" type="date" value={goalDate} min={todayIso()} onChange={(e) => setGoalDate(e.target.value)} className={`${inputClass} bg-surface`} />
           </Field>
           {parseEuros(goal) ? <p className="text-[0.9375rem] text-muted">Objectif : {formatEuros(parseEuros(goal)!)} pour « {goalName || 'mon objectif'} ».</p> : null}
+          <Field label="Combien as-tu déjà coffré ? (facultatif)" htmlFor="savedNow" hint="Si tu as déjà de l’argent de côté pour tes projets, indique le montant exact : ta progression partira de là.">
+            <MoneyInput id="savedNow" value={savedNow} onChange={setSavedNow} placeholder="0" className="bg-surface" />
+          </Field>
           <p className="rounded-2xl bg-surface p-3 text-[0.875rem] text-muted">Tu as plusieurs projets (ski, voyage…) ? Tu pourras ajouter d’autres objectifs depuis l’accueil.</p>
         </section>
       )}

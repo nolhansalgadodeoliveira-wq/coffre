@@ -99,10 +99,11 @@ export function computeStats(data: AppData, today: string): Stats {
   const figures = bilans.map((b) => savedBilanFigures(b, data))
   const saved = totalSaved(data, today)
   // Épargne mois par mois (mois terminés) : montant du bilan s'il existe, sinon calcul automatique.
-  const savedMonths = [...new Set([...bilans.map((b) => b.month), ...monthsWithData(data).filter((m) => m < currentKey)])].sort()
+  const base = data.settings.savedBaseline
+  const savedMonths = [...new Set([...bilans.map((b) => b.month), ...monthsWithData(data).filter((m) => m < currentKey)])].filter((m) => !base || m > base.month).sort()
   const savedOf = (m: string) => bilans.find((b) => b.month === m)?.actual ?? autoSaved(data, m)
   const earnedSaved = savedMonths.reduce((s, m) => s + (totals.get(m) ?? 0), 0)
-  let running = 0
+  let running = base?.amount ?? 0
 
   return {
     dayCount,
@@ -126,10 +127,10 @@ export function computeStats(data: AppData, today: string): Stats {
     clients,
     saved,
     tips: entries.reduce((a, e) => a + (e.tips ?? 0), 0),
-    savingRate: earnedSaved > 0 ? (saved / earnedSaved) * 100 : null,
+    savingRate: earnedSaved > 0 && !base ? (saved / earnedSaved) * 100 : null,
     gapTotal: figures.reduce((s, f) => s + f.gap, 0),
     monthsAhead: figures.filter((f) => f.gap > 0).length,
     monthsBehind: figures.filter((f) => f.gap < 0).length,
-    cumulative: savedMonths.map((m) => ({ month: m, cumulative: (running += savedOf(m)) })),
+    cumulative: [...(base ? [{ month: base.month, cumulative: base.amount }] : []), ...savedMonths.map((m) => ({ month: m, cumulative: (running += savedOf(m)) }))],
   }
 }
