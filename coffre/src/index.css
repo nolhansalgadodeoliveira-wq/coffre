@@ -1,0 +1,160 @@
+@import 'tailwindcss';
+
+/*
+  Direction : pastel doux et joueur, comme une app de coaching.
+  Fond lavande très clair, grandes cartes très arrondies en couleurs franches mais douces
+  (violet, orange, bleu, rose), texte presque noir, barre de navigation noire flottante.
+  Vert et rouge sont réservés aux écarts (en avance / en retard).
+  Un seul thème, clair, assumé : les couleurs pastel sont l'identité de l'app.
+*/
+:root {
+  --bg: #f4f2fa;
+  --surface: #ffffff;
+  --field: #f4f2fa;
+  --ink: #121215;
+  --muted: #5d596b;
+  --line: #e7e4f0;
+
+  --violet: #b9a7ff;
+  --violet-deep: #6c52e8;
+  --violet-soft: #ebe6ff;
+  --orange: #ffbd5e;
+  --orange-deep: #a24c12;
+  --orange-soft: #ffe7c7;
+  --blue: #aecbff;
+  --blue-soft: #e3edff;
+  --pink: #f6b2ef;
+  --pink-soft: #fde6fb;
+  --peach: #ffe3c8;
+
+  --good: #0f6b44;
+  --good-soft: #d7f2e4;
+  --bad: #b3261e;
+  --bad-soft: #fbe2e0;
+
+  /* Anciens noms gardés pour la compatibilité */
+  --accent: var(--violet-deep);
+  --accent-ink: #ffffff;
+  --accent-soft: var(--violet-soft);
+  color-scheme: light;
+}
+
+@theme {
+  --font-sans: 'Outfit Variable', 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-field: var(--field);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-violet: var(--violet);
+  --color-violet-deep: var(--violet-deep);
+  --color-violet-soft: var(--violet-soft);
+  --color-orange: var(--orange);
+  --color-orange-deep: var(--orange-deep);
+  --color-orange-soft: var(--orange-soft);
+  --color-blue: var(--blue);
+  --color-blue-soft: var(--blue-soft);
+  --color-pink: var(--pink);
+  --color-pink-soft: var(--pink-soft);
+  --color-peach: var(--peach);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+}
+
+/* Styles de base dans la couche « base » : les classes utilitaires gardent toujours la priorité. */
+@layer base {
+  html,
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    margin: 0;
+  }
+
+  input,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  input[type='date'] {
+    min-height: 3.5rem;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Chiffres alignés et resserrés. */
+  .num {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  .label {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--muted);
+  }
+
+  .display {
+    font-weight: 700;
+    letter-spacing: -0.035em;
+    line-height: 1;
+  }
+}
+
+/* Anneau et formes de l'écran d'accueil : apparition douce au chargement. */
+@keyframes ring-draw {
+  from {
+    stroke-dashoffset: 603;
+  }
+}
+.ring-arc {
+  animation: ring-draw 1.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes float-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.96);
+  }
+}
+.float-in {
+  animation: float-in 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes bob {
+  50% {
+    transform: translateY(-6px);
+  }
+}
+.bob {
+  animation: bob 5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
