@@ -31,6 +31,7 @@ export function useSync(account: Account, data: AppData, replaceData: (d: AppDat
   dataRef.current = data
   const running = useRef<Promise<void> | null>(null)
   const again = useRef(false)
+  const runId = useRef(0)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fromCloud = useRef<AppData | null>(null)
   const firstRun = useRef(true)
@@ -66,15 +67,20 @@ export function useSync(account: Account, data: AppData, replaceData: (d: AppDat
       return
     }
     setStatus('syncing')
+    const id = ++runId.current
     running.current = (async () => {
       try {
         const { data: s } = await withTimeout(supabase.auth.getSession())
+        if (id !== runId.current) return
         if (!s.session || s.session.user.id !== account.id) {
           setStatus('relogin')
           return
         }
-        apply(await withTimeout(syncOnce(dataRef.current, metaRef.current, createStore(account.id), account.id, new Date().toISOString())))
+        const res = await withTimeout(syncOnce(dataRef.current, metaRef.current, createStore(account.id), account.id, new Date().toISOString()))
+        // Passe abandonnée (le réseau est revenu entre-temps et une nouvelle passe a démarré) : son résultat est ignoré.
+        if (id === runId.current) apply(res)
       } catch (e) {
+        if (id !== runId.current) return
         const msg = e instanceof Error ? e.message : ''
         const offline = /fetch|network|failed|load failed/i.test(msg)
         setStatus(offline ? 'offline' : 'error')
@@ -83,8 +89,9 @@ export function useSync(account: Account, data: AppData, replaceData: (d: AppDat
         setFirstPull(false)
       }
     })()
-    await running.current
-    running.current = null
+    const mine = running.current
+    await mine
+    if (running.current === mine) running.current = null
     if (again.current) {
       again.current = false
       await sync()
@@ -122,11 +129,18 @@ export function useSync(account: Account, data: AppData, replaceData: (d: AppDat
   // Reprise de l'app, passage en arrière-plan et retour du réseau.
   useEffect(() => {
     const onVisible = () => void sync()
+    // Retour du réseau : une passe bloquée pendant la coupure est abandonnée, on repart tout de suite.
+    const onOnline = () => {
+      runId.current++
+      running.current = null
+      again.current = false
+      void sync()
+    }
     document.addEventListener('visibilitychange', onVisible)
-    window.addEventListener('online', onVisible)
+    window.addEventListener('online', onOnline)
     return () => {
       document.removeEventListener('visibilitychange', onVisible)
-      window.removeEventListener('online', onVisible)
+      window.removeEventListener('online', onOnline)
     }
   }, [sync])
 

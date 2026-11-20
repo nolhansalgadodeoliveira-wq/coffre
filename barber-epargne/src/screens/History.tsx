@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ScreenProps } from '../App'
-import { entriesOfMonth, monthsWithData, plural, savedBilanFigures, sum, entryKeepPct } from '../lib/calc'
+import { entriesOfMonth, monthsWithData, plural, savedBilanFigures, sum, entryKeepPct, expenseCategories, incomeCategories, tracksExpenses } from '../lib/calc'
 import { formatMonthKey, weekday, WEEKDAY_SHORT } from '../lib/dates'
 import { formatEuros, formatEurosShort, formatSigned } from '../lib/money'
 import { ArrowBadge, Card, Chip, DeltaChip, Screen, Segmented, type Tone } from '../ui'
@@ -10,7 +10,10 @@ const CARD_TONES: Tone[] = ['orange', 'blue', 'pink', 'violet']
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 export default function History({ data, open }: ScreenProps) {
-  const [view, setView] = useState<'jours' | 'bilans'>('jours')
+  const [view, setView] = useState<'jours' | 'depenses' | 'bilans'>('jours')
+  const withCosts = tracksExpenses(data.settings) || data.expenses.length > 0
+  const xcats = expenseCategories(data.settings)
+  const costMonths = [...new Set(data.expenses.map((x) => x.date.slice(0, 7)))].sort().reverse()
   const months = monthsWithData(data).reverse()
   const bilans = data.bilans.map((b) => ({ b, f: savedBilanFigures(b, data) })).sort((x, y) => y.b.month.localeCompare(x.b.month))
   const billed = new Set(data.bilans.map((b) => b.month))
@@ -23,9 +26,55 @@ export default function History({ data, open }: ScreenProps) {
         onChange={setView}
         options={[
           { value: 'jours', label: `Journées · ${data.entries.length}` },
+          ...(withCosts ? [{ value: 'depenses' as const, label: `Dépenses · ${data.expenses.length}` }] : []),
           { value: 'bilans', label: `Bilans · ${bilans.length}` },
         ]}
       />
+
+      {view === 'depenses' && (
+        <>
+          <button type="button" onClick={() => open({ kind: 'depense' })} className="h-12 rounded-full bg-ink text-[1rem] font-semibold text-white active:scale-95">
+            + Ajouter une dépense
+          </button>
+          {costMonths.length === 0 ? (
+            <Card className="text-[1rem] text-muted">Aucune dépense enregistrée pour l’instant.</Card>
+          ) : (
+            costMonths.map((m) => {
+              const xs = data.expenses.filter((x) => x.date.startsWith(m)).reverse()
+              return (
+                <section key={m} className="flex flex-col gap-2.5">
+                  <div className="flex items-baseline justify-between px-1">
+                    <h2 className="text-[1.1875rem] font-semibold">{cap(formatMonthKey(m))}</h2>
+                    <span className="num text-[0.9375rem] text-muted">{formatEurosShort(xs.reduce((a, x) => a + x.amount, 0))}</span>
+                  </div>
+                  <ul className="flex flex-col gap-2">
+                    {xs.map((x) => {
+                      const c = xcats.find((k) => k.id === x.cat)
+                      return (
+                        <li key={x.id}>
+                          <button type="button" onClick={() => open({ kind: 'depense', expenseId: x.id })} className="flex w-full items-center gap-3 rounded-[22px] bg-surface p-3 pr-5 text-left active:scale-[0.99]">
+                            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-field text-[1.25rem]" aria-hidden="true">
+                              {c?.emoji ?? '•'}
+                            </span>
+                            <span className="flex min-w-0 flex-1 flex-col">
+                              <span className="truncate font-medium">{c?.label ?? 'Autres'}</span>
+                              <span className="truncate text-[0.8125rem] text-muted">
+                                {Number(x.date.slice(8))} {formatMonthKey(m).split(' ')[0]}
+                                {x.note ? ` · ${x.note}` : ''}
+                              </span>
+                            </span>
+                            <span className="num shrink-0 font-semibold">− {formatEuros(x.amount)}</span>
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </section>
+              )
+            })
+          )}
+        </>
+      )}
 
       {view === 'jours' &&
         (months.length === 0 ? (
@@ -51,10 +100,11 @@ export default function History({ data, open }: ScreenProps) {
                         </span>
                         <span className="flex min-w-0 flex-1 flex-col">
                           <span className="text-[1rem] font-medium">Encaissé {formatEurosShort(e.gross)}</span>
-                          {(e.clients != null || entryKeepPct(e, data.settings.keepPct) !== data.settings.keepPct || e.tips) && (
+                          {(e.clients != null || entryKeepPct(e, data.settings.keepPct) !== data.settings.keepPct || e.tips || e.parts) && (
                             <span className="text-[0.8125rem] text-muted">
                               {[
                                 entryKeepPct(e, data.settings.keepPct) !== data.settings.keepPct ? `${String(entryKeepPct(e, data.settings.keepPct)).replace('.', ',')} % gardés` : null,
+                                ...Object.entries(e.parts ?? {}).map(([k, v]) => `${incomeCategories(data.settings).find((c) => c.id === k)?.label ?? 'Autres'} : ${formatEurosShort(v)}`),
                                 e.tips ? `${formatEurosShort(e.tips)} de pourboires` : null,
                                 e.clients != null ? plural(e.clients, 'client', 'clients') : null,
                               ]

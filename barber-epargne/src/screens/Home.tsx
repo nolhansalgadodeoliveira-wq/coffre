@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ScreenProps } from '../App'
 import { nowIso } from '../App'
 import { loadPrefs } from '../lib/push'
-import { autoSaved, trackingStart, bilanFigures, dailyAverage, dayStatus, entriesOfMonth, goalsPlan, MIN_DAYS_FOR_ESTIMATE, monthProjection, monthsWithData, monthSummary, nextGoal, pendingDays, plannedDaysOfMonth, plural } from '../lib/calc'
+import { autoSaved, averageMonthlyCosts, costsOfMonth, tracksExpenses, trackingStart, bilanFigures, dailyAverage, dayStatus, entriesOfMonth, goalsPlan, MIN_DAYS_FOR_ESTIMATE, monthProjection, monthsWithData, monthSummary, nextGoal, pendingDays, plannedDaysOfMonth, plural } from '../lib/calc'
 import { addDays, addMonths, datesOfMonth, formatDay, formatDayLong, mondayOf, monthKeyOf, monthName, weekday, WEEKDAY_SHORT } from '../lib/dates'
 import { formatEuros, formatEurosShort, formatSigned } from '../lib/money'
 import { backupDue, lastBackupAt, saveBackupFile } from '../lib/backup'
@@ -76,10 +76,13 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
   const lastWeek = weekEntries(addDays(monday, -7))
   const total = (l: typeof thisWeek) => l.reduce((a, e) => a + e.amount, 0)
 
+  // Dépenses professionnelles du mois affiché (métiers avec charges).
+  const withCosts = tracksExpenses(s)
+  const costs = costsOfMonth(data, month)
   // Objectif du mois, exprimé en ENCAISSÉ (ce que tu vois à la caisse) : de quoi tenir tous tes objectifs.
   const c = s.commission
   const needShare =
-    plan.perMonth > 0 ? Math.round((plan.perMonth + s.personalExpenses + (c.enabled && c.mode === 'fixed' ? c.value : 0)) / (c.enabled && c.mode === 'percent' ? Math.max(0.01, 1 - c.value / 100) : 1)) : 0
+    plan.perMonth > 0 ? Math.round((plan.perMonth + s.personalExpenses + Math.max(costs, averageMonthlyCosts(data, today)) + (c.enabled && c.mode === 'fixed' ? c.value : 0)) / (c.enabled && c.mode === 'percent' ? Math.max(0.01, 1 - c.value / 100) : 1)) : 0
   const needGross = Math.round((needShare * 100) / s.keepPct)
   const grossSoFar = entries.reduce((a, e) => a + e.gross, 0)
   const daysLeftInMonth = plannedDaysOfMonth(data, month).filter((d) => d >= today && !sum.entered.includes(d)).length
@@ -158,6 +161,11 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
           Ajouter ma journée
         </PrimaryButton>
       )}
+      {withCosts && (
+        <button type="button" onClick={() => open({ kind: 'depense' })} className="-mt-2 flex h-12 items-center justify-center gap-2 rounded-full bg-surface text-[1rem] font-semibold active:scale-95">
+          <IconPlus size={18} /> Ajouter une dépense
+        </button>
+      )}
 
       {showCheck && (
         <Card tone="blue" className="flex flex-col gap-3">
@@ -177,6 +185,9 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
               Un autre montant
             </button>
           </div>
+          <button type="button" onClick={() => open({ kind: 'resume', period: 'mois', key: prev })} className="h-11 self-start text-[0.9375rem] font-semibold underline underline-offset-2">
+            Voir le résumé de {monthName(prev)}
+          </button>
         </Card>
       )}
 
@@ -260,9 +271,21 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
           <div className="flex flex-col gap-1">
             <span className="num display text-[2.5rem] min-[380px]:text-[2.875rem]">{formatEurosShort(sum.total)}</span>
             <span className="text-[0.9375rem] font-medium text-ink/80">
-              Ta part · {plural(sum.entered.length, 'jour travaillé', 'jours travaillés')}
+              {s.keepPct === 100 ? 'Recettes' : 'Ta part'} · {plural(sum.entered.length, 'jour travaillé', 'jours travaillés')}
             </span>
           </div>
+          {withCosts && (
+            <div className="grid grid-cols-2 gap-2 text-[0.875rem]">
+              <span className="flex flex-col rounded-2xl bg-white/55 p-3">
+                <span className="text-ink/75">Dépenses</span>
+                <strong className="num text-[1.125rem]">− {formatEurosShort(costs)}</strong>
+              </span>
+              <span className="flex flex-col rounded-2xl bg-white/55 p-3">
+                <span className="text-ink/75">Il te reste</span>
+                <strong className="num text-[1.125rem]">{formatEurosShort(sum.total - costs)}</strong>
+              </span>
+            </div>
+          )}
 
           {target && (
             <div className="flex flex-col gap-2 rounded-2xl bg-white/55 p-3">
@@ -290,6 +313,11 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
             </p>
           )}
 
+          {sum.hasData && (
+            <button type="button" onClick={() => open({ kind: 'resume', period: 'mois', key: month })} className="h-11 self-start rounded-full bg-white/60 px-4 text-[0.9375rem] font-semibold active:scale-95">
+              Résumé de {name}
+            </button>
+          )}
           {monthSaved !== null && (
             <button type="button" onClick={() => (sum.bilan ? open({ kind: 'bilan', bilanId: sum.bilan.id }) : open({ kind: 'bilan', month }))} className="flex items-center justify-between gap-3 rounded-2xl bg-white/55 p-3 text-left text-[0.875rem]">
               <span>
@@ -319,7 +347,7 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
                   onClick={() => open(e ? { kind: 'ajout', entryId: e.id } : { kind: 'ajout', date: d })}
                   aria-label={`${formatDayLong(d)} : ${e ? formatEuros(e.amount) : future ? 'à venir' : before ? 'avant tes débuts' : 'à saisir'}`}
                   className={`flex h-[84px] w-[60px] flex-col items-center justify-center gap-0.5 rounded-full border-[1.5px] active:scale-95 ${
-                    e ? 'border-ink bg-ink text-white' : future || before ? 'border-line text-muted' : 'border-dashed border-violet-deep bg-surface text-ink'
+                    e ? 'border-day-done bg-day-done text-white' : future || before ? 'border-line text-muted' : 'border-dashed border-day-todo bg-day-todo-soft text-ink'
                   } ${d === today ? 'ring-2 ring-violet ring-offset-2 ring-offset-bg' : ''}`}
                 >
                   <span className={`h-1.5 w-1.5 rounded-full ${e ? 'bg-white' : extra ? 'bg-orange' : 'bg-transparent'}`} />

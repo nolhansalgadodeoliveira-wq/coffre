@@ -85,6 +85,6 @@ describe('import et données abîmées', () => {
 
   it('export tableur lisible par Excel en français', () => {
     const d = parseData({ entries: [{ id: 'a', date: '2026-11-07', gross: 24550, amount: 12275, clients: 9 }], bilans: [] })!
-    expect(toCsv(d)).toBe('﻿date;encaissé;ta part;clients\r\n2026-11-07;245,50;122,75;9')
+    expect(toCsv(d)).toBe('\ufeffdate;encaissé;coupes au salon;produits vendus;pourboires;à domicile;autres;ta part;part gardée (%);clients\r\n2026-11-07;245,50;245,50;0,00;0,00;0,00;0,00;122,75;;9')
   })
 })

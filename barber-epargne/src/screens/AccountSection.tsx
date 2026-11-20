@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent } from 'react'
 import type { ScreenProps } from '../App'
 import { changePassword, clearLocalData, signOutEverywhere } from '../lib/accounts'
+import { disablePush, loadPrefs } from '../lib/push'
 import { lastBackupAt, listSnapshots, saveBackupFile, snapshotData } from '../lib/backup'
 import { formatDayYear } from '../lib/dates'
 import { mergeData } from '../lib/sync'
@@ -59,6 +60,8 @@ export default function AccountSection({ account, sync, data, update, today }: P
     const sent = force || (await sync.flush())
     setLeaving(false)
     if (!sent) return setUnsynced(true)
+    // Les rappels de ce téléphone sont liés au compte : on les retire avant de partir.
+    if (loadPrefs().enabled) await disablePush(account.id)
     await signOutEverywhere()
     window.location.reload()
   }
@@ -73,7 +76,7 @@ export default function AccountSection({ account, sync, data, update, today }: P
           : sync.status === 'error'
             ? sync.error
             : sync.lastSyncAt
-              ? `Données en ligne à jour (${when(sync.lastSyncAt)}). Tu les retrouves sur tous tes appareils.`
+              ? `Données en ligne à jour (${when(sync.lastSyncAt)}). Tu les retrouves sur tous tes appareils, rien à faire.`
               : 'Prêt à synchroniser.'
 
   const copies = showCopies ? listSnapshots() : []
@@ -87,7 +90,7 @@ export default function AccountSection({ account, sync, data, update, today }: P
         <p role="status" className={`text-[0.875rem] ${sync.status === 'error' ? 'font-medium text-bad' : 'text-ink/80'}`}>
           {syncText}
         </p>
-        <SecondaryButton onClick={() => void sync.syncNow()}>Synchroniser maintenant</SecondaryButton>
+        {(sync.status === 'error' || sync.status === 'relogin') && <SecondaryButton onClick={() => void sync.syncNow()}>Réessayer</SecondaryButton>}
         {pwOpen ? (
           <form className="flex flex-col gap-3" onSubmit={(e) => void submitPassword(e)}>
             <label htmlFor="oldpw" className="text-[0.9375rem] font-medium">Mot de passe actuel</label>

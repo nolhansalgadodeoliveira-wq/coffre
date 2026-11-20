@@ -4,11 +4,14 @@ import { nowIso } from '../App'
 import { formatDayYear, todayIso, WEEK_ORDER, WEEKDAY_LONG, WEEKDAY_SHORT } from '../lib/dates'
 import { centsToInput, formatEurosShort, parseEuros } from '../lib/money'
 import { download, toCsv } from '../lib/storage'
-import { changeWorkdays } from '../lib/calc'
+import { changeWorkdays, expenseCategories, incomeCategories, tracksExpenses } from '../lib/calc'
+import { BARBER, findProfession } from '../lib/professions'
 import type { Settings } from '../lib/types'
 import { EMPTY_DATA } from '../lib/types'
 import { IconCheck } from '../icons'
 import AccountSection from './AccountSection'
+import RemindersSection from './RemindersSection'
+import { LockSection } from './Lock'
 import { Card, DangerButton, Field, inputClass, MoneyInput, Notice, PrimaryButton, Screen, SecondaryButton, Segmented, Toggle } from '../ui'
 
 export default function SettingsScreen({ data, update, account, sync, open }: ScreenProps) {
@@ -17,6 +20,7 @@ export default function SettingsScreen({ data, update, account, sync, open }: Sc
   const [workdays, setWorkdays] = useState<number[]>(s.workdays)
   const [hours, setHours] = useState(String(s.hoursPerDay).replace('.', ','))
   const [keep, setKeep] = useState(String(s.keepPct).replace('.', ','))
+  const [homeKeep, setHomeKeep] = useState(s.homeKeepPct != null ? String(s.homeKeepPct).replace('.', ',') : '')
   const [expenses, setExpenses] = useState(centsToInput(s.personalExpenses))
   const [comEnabled, setComEnabled] = useState(s.commission.enabled)
   const [comMode, setComMode] = useState(s.commission.mode)
@@ -33,6 +37,8 @@ export default function SettingsScreen({ data, update, account, sync, open }: Sc
     if (workdays.length === 0) return setMessage({ text: 'Choisis au moins un jour de travail habituel.', bad: true })
     if (!(h > 0 && h <= 24)) return setMessage({ text: 'Les heures par jour doivent être entre 1 et 24.', bad: true })
     if (!(k > 0 && k <= 100)) return setMessage({ text: 'La part gardée doit être entre 1 et 100 %.', bad: true })
+    const hk = homeKeep.trim() === '' ? null : num(homeKeep)
+    if (hk !== null && !(hk > 0 && hk <= 100)) return setMessage({ text: 'La part gardée à domicile doit être entre 1 et 100 %, ou vide.', bad: true })
     if (e === null) return setMessage({ text: 'Indique tes dépenses perso (0 si aucune).', bad: true })
     if (cv === null || Number.isNaN(cv) || cv < 0 || (comMode === 'percent' && cv > 100)) return setMessage({ text: 'La commission doit être un pourcentage entre 0 et 100, ou un montant.', bad: true })
 
@@ -42,6 +48,7 @@ export default function SettingsScreen({ data, update, account, sync, open }: Sc
       workdays,
       hoursPerDay: h,
       keepPct: k,
+      homeKeepPct: hk ?? undefined,
       personalExpenses: e,
       commission: { enabled: comEnabled, mode: comMode, value: cv },
       updatedAt: nowIso(),
@@ -56,11 +63,30 @@ export default function SettingsScreen({ data, update, account, sync, open }: Sc
     <Screen title="Réglages">
       <AccountSection account={account} sync={sync} data={data} update={update} today={todayIso()} />
 
+      <RemindersSection account={account} open={open} />
+
+      <LockSection email={account.email} />
+
       <Card className="flex flex-col gap-5">
         <span className="text-[1.1875rem] font-semibold">Profil</span>
         <Field label="Ton prénom" htmlFor="name">
           <input id="name" autoComplete="given-name" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} maxLength={40} />
         </Field>
+      </Card>
+
+      <Card className="flex flex-col gap-3">
+        <span className="text-[1.1875rem] font-semibold">Mon métier</span>
+        <p className="flex items-center gap-3 text-[1rem]">
+          <span className="text-[1.5rem]" aria-hidden="true">
+            {(findProfession(s.profession?.id) ?? BARBER).emoji}
+          </span>
+          <span className="font-medium">{s.profession?.label ?? BARBER.label}</span>
+        </p>
+        <p className="text-[0.875rem] text-muted">
+          {incomeCategories(s).map((c) => c.label).join(' · ')}
+          {tracksExpenses(s) ? ` — dépenses : ${expenseCategories(s).length} catégories` : ''}
+        </p>
+        <SecondaryButton onClick={() => open({ kind: 'metier' })}>Changer de métier ou de catégories</SecondaryButton>
       </Card>
 
       <Card className="flex flex-col gap-5">
@@ -85,6 +111,11 @@ export default function SettingsScreen({ data, update, account, sync, open }: Sc
         <Field label="Part que tu gardes sur ce que tu encaisses (%)" htmlFor="keep" hint="S’applique aux prochaines journées saisies. Les anciennes ne changent pas.">
           <input id="keep" inputMode="decimal" value={keep} onChange={(e) => setKeep(e.target.value)} className={`${inputClass} num`} />
         </Field>
+{incomeCategories(s).some((c) => c.kind === 'home') && (
+        <Field label="Part gardée à domicile (%)" htmlFor="homeKeep" hint="Pour les prestations à domicile. Laisse vide : la même qu’au salon.">
+          <input id="homeKeep" inputMode="decimal" value={homeKeep} placeholder={String(s.keepPct).replace('.', ',')} onChange={(e) => setHomeKeep(e.target.value)} className={`${inputClass} num`} />
+        </Field>
+        )}
       </Card>
 
       <Card className="flex flex-col gap-4">
@@ -121,8 +152,8 @@ export default function SettingsScreen({ data, update, account, sync, open }: Sc
       <Card className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-4">
           <span className="flex min-w-0 flex-col">
-            <span className="text-[1.0625rem] font-semibold">Frais du salon</span>
-            <span className="text-[0.875rem] text-muted">Loyer du fauteuil ou commission, retirés chaque mois.</span>
+            <span className="text-[1.0625rem] font-semibold">Frais fixes ou commission</span>
+            <span className="text-[0.875rem] text-muted">Loyer du fauteuil, part du réseau ou de la plateforme… retirés chaque mois.</span>
           </span>
           <Toggle id="comEnabled" checked={comEnabled} onChange={setComEnabled} label="Retirer des frais du salon" />
         </div>

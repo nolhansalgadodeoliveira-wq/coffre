@@ -8,7 +8,8 @@ import { parseData } from './storage'
 import type { CloudStore, RemoteDoc } from './sync'
 import type { AppData } from './types'
 
-const URL = 'https://tbstvayobvtngfwqgeah.supabase.co'
+export const PROJECT_URL = 'https://tbstvayobvtngfwqgeah.supabase.co'
+const URL = PROJECT_URL
 const KEY = 'sb_publishable_Md6Efa6epbiGFqKo3cc2Pg_hzoknu76'
 
 const REMEMBER_KEY = 'coffre-rester-connecte:v1'

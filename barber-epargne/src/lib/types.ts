@@ -16,11 +16,38 @@ export interface Entry {
   /** Ta part, en centimes : encaissé × part gardée, figée au moment de la saisie. */
   amount: number
   clients?: number
+  /**
+   * Détail de l'encaissé par catégorie de recette (id → centimes). Le reste de `gross` revient à la
+   * première catégorie (coupes au salon pour un barbier, installations pour un climaticien…).
+   */
+  parts?: Record<string, number>
   /** Part gardée CE jour-là, en % (si différente des réglages ; sinon celle des réglages au moment de la saisie). */
   keepPct?: number
   /** Pourboires du jour, en centimes : ils s'ajoutent entiers à ta part (pas partagés). Déjà inclus dans `amount`. */
   tips?: number
   /** Dernière modification (ISO) : sert à garder la version la plus récente entre deux appareils. */
+  updatedAt: string
+}
+
+/** Une catégorie de recette ou de dépense, choisie selon le métier (modifiable). */
+export interface CategoryDef {
+  id: string
+  label: string
+  emoji: string
+  /** 'tips' : pourboires (gardés à 100 %, saisis à part) ; 'home' : à domicile (part gardée propre). */
+  kind?: 'tips' | 'home'
+}
+
+/** Une dépense professionnelle (matériel, carburant, cotisations…). */
+export interface Expense {
+  id: string
+  /** AAAA-MM-JJ */
+  date: string
+  /** Catégorie de dépense (id). */
+  cat: string
+  /** Montant, en centimes. */
+  amount: number
+  note?: string
   updatedAt: string
 }
 
@@ -59,8 +86,15 @@ export interface Settings {
   hoursPerDay: number
   /** Part que tu gardes sur ce que tu encaisses, en % (50 = tu gardes la moitié). */
   keepPct: number
+  /** Part gardée sur les prestations à domicile, en % (absent : la même qu'au salon). */
+  homeKeepPct?: number
   /** Dépenses perso par mois, en centimes. */
   personalExpenses: number
+  /** Métier choisi à l'inscription (absent : barbier, la version d'origine de l'app). */
+  profession?: { id: string; label: string }
+  /** Catégories de recettes et de dépenses du métier (absentes : celles du barbier). */
+  incomeCats?: CategoryDef[]
+  expenseCats?: CategoryDef[]
   /** Objectifs d'épargne (mariage, ski…). */
   goals: Goal[]
   commission: Commission
@@ -94,6 +128,8 @@ export interface AppData {
   days: Record<string, DayStatus>
   /** Suppressions (clé « e:AAAA-MM-JJ » ou « b:AAAA-MM » → date de suppression), pour qu'une fusion ne les fasse pas revenir. */
   deleted: Record<string, string>
+  /** Dépenses professionnelles (métiers avec charges). */
+  expenses: Expense[]
   settings: Settings
 }
 
@@ -117,6 +153,7 @@ export const EMPTY_DATA: AppData = {
   bilans: [],
   days: {},
   deleted: {},
+  expenses: [],
   settings: DEFAULT_SETTINGS,
 }
 

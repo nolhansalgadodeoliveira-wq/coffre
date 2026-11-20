@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import type { ScreenProps } from '../App'
 import { nowIso } from '../App'
-import { defaultStatus, entryKeepPct, isBilled, monthSummary, myShare, pendingDays, suggestedDay, validateEntry, type EntryError } from '../lib/calc'
+import { defaultStatus, entryKeepPct, incomeCategories, isBilled, mainCategory, monthSummary, shareOf, pendingDays, suggestedDay, validateEntry, type EntryError } from '../lib/calc'
 import { addDays, formatDayLong, isValidIso, monthKeyOf, weekday, WEEKDAY_SHORT } from '../lib/dates'
 import { centsToInput, formatEuros, parseEuros } from '../lib/money'
 import { newId } from '../lib/storage'
@@ -42,16 +42,39 @@ export default function AddDay({
   const pctValid = Number.isFinite(pctNum) && pctNum > 0 && pctNum <= 100
   const keepPct = pctValid ? pctNum : initialPct
   const [date, setDate] = useState(editing?.date ?? dateProp ?? suggestedDay(data, monthProp, today))
-  const [amount, setAmount] = useState(editing ? centsToInput(editing.gross) : '')
+  // Catégories du métier : la principale reçoit le montant du grand champ ; les autres se détaillent à la demande.
+  const cats = incomeCategories(data.settings)
+  const main = mainCategory(data.settings)
+  const tipsCat = cats.find((c) => c.kind === 'tips')
+  const extras = cats.filter((c) => c.id !== main.id && c.kind !== 'tips')
+  const initialParts: Record<string, number> = { ...(editing?.parts ?? {}) }
+  const initialPartsSum = Object.values(initialParts).reduce((x, y) => x + y, 0)
+  const [amount, setAmount] = useState(editing ? centsToInput(editing.gross - initialPartsSum) : '')
+  const [partText, setPartText] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(initialParts).map(([k, v]) => [k, centsToInput(v)])))
+  const [shown, setShown] = useState<string[]>(() => Object.keys(initialParts))
   const [tips, setTips] = useState(editing?.tips ? centsToInput(editing.tips) : '')
   const [clients, setClients] = useState(editing?.clients != null ? String(editing.clients) : '')
   const [error, setError] = useState<EntryError | null>(null)
 
-  const cents = parseEuros(amount)
+  const opt = (t: string) => (t.trim() === '' ? 0 : parseEuros(t))
+  const mainCents = opt(amount)
+  const partCents: Record<string, number | null> = Object.fromEntries(shown.map((k) => [k, opt(partText[k] ?? '')]))
+  const partsValid = Object.values(partCents).every((v) => v !== null)
+  const partsSum = Object.values(partCents).reduce<number>((x, y) => x + (y ?? 0), 0)
+  const anyText = [amount, ...shown.map((k) => partText[k] ?? '')].some((t) => t.trim() !== '')
+  const cents = mainCents === null || !partsValid || !anyText ? null : mainCents + partsSum
+  const detailed = shown.length > 0
+  const homeIds = new Set(cats.filter((c) => c.kind === 'home').map((c) => c.id))
+  const homeCents = shown.filter((k) => homeIds.has(k)).reduce((x, k) => x + (partCents[k] ?? 0), 0)
+  const homePct = data.settings.homeKeepPct ?? keepPct
   const tipsCents = tips.trim() === '' ? 0 : parseEuros(tips)
-  // Journée existante sans changement de montant ni de % : on garde exactement sa part (pas d'écart d'arrondi).
-  const baseShare = (c: number) => (editing && c === editing.gross && keepPct === initialPct ? editing.amount - (editing.tips ?? 0) : myShare(c, keepPct))
+  // Journée existante sans changement de montants ni de % : on garde exactement sa part (pas d'écart d'arrondi).
+  const sameParts = () => shown.length === Object.keys(initialParts).length && shown.every((k) => partCents[k] === initialParts[k])
+  const unchanged = (c: number) => editing && c === editing.gross && keepPct === initialPct && sameParts()
+  const baseShare = (c: number) => (unchanged(c) ? editing!.amount - (editing!.tips ?? 0) : shareOf(c, homeCents, keepPct, homePct))
   const share = cents === null || tipsCents === null || !pctValid ? null : baseShare(cents) + tipsCents
+  // Indépendant (part gardée 100 %) : pas de partage, on parle simplement de « recettes ».
+  const independent = data.settings.keepPct === 100 && keepPct === 100 && !homeIds.size
   const valid = isValidIso(date)
   const usual = valid && defaultStatus(data, date) === 'prevu'
   const billed = valid && isBilled(data, date)
@@ -66,7 +89,7 @@ export default function AddDay({
 
   function save(continueTo?: string) {
     const n = clients.trim() === '' ? null : Number(clients)
-    const err = validateEntry({ date, text: amount, cents, clients: n, id: editing?.id }, data.entries, today)
+    const err = validateEntry({ date, text: anyText ? 'ok' : '', cents, clients: n, id: editing?.id }, data.entries, today)
     setError(err)
     if (err || cents === null) return
     if (tipsCents === null) return setError('montant-invalide')
@@ -80,6 +103,7 @@ export default function AddDay({
       // Ta part est figée à la saisie : changer la part gardée plus tard ne réécrit pas le passé.
       amount: baseShare(cents) + tipsCents,
       keepPct,
+      ...(partsSum > 0 ? { parts: Object.fromEntries(Object.entries(partCents).filter(([, v]) => (v ?? 0) > 0)) as Record<string, number> } : {}),
       ...(tipsCents > 0 ? { tips: tipsCents } : {}),
       ...(n != null ? { clients: n } : {}),
       updatedAt: stamp,
@@ -103,6 +127,8 @@ export default function AddDay({
     if (continueTo) {
       setDate(continueTo)
       setAmount('')
+      setPartText({})
+      setShown([])
       setTips('')
       setPctText(String(data.settings.keepPct).replace('.', ','))
       setPctOpen(false)
@@ -180,10 +206,34 @@ export default function AddDay({
         </Card>
 
         <Card tone="orange" className="flex flex-col gap-3">
-          <label htmlFor="amount" className="text-[1rem] font-semibold">
-            Total encaissé
+          <label htmlFor="amount" className="flex items-center gap-2 text-[1rem] font-semibold">
+            {detailed && <Dot color={main.color} />}
+            {detailed ? main.label : 'Total encaissé'}
           </label>
           <MoneyInput id="amount" value={amount} onChange={(v) => (setAmount(v), setError(null))} large onTone />
+          {extras
+            .filter((c) => shown.includes(c.id))
+            .map((c) => (
+              <div key={c.id} className="flex flex-col gap-1.5">
+                <label htmlFor={`part-${c.id}`} className="flex items-center gap-2 text-[0.9375rem] font-medium">
+                  <Dot color={c.color} /> {c.label}
+                  {c.kind === 'home' && homePct !== keepPct && <span className="text-[0.8125rem] font-normal text-ink/75">(tu gardes {String(homePct).replace('.', ',')} %)</span>}
+                </label>
+                <MoneyInput id={`part-${c.id}`} value={partText[c.id] ?? ''} onChange={(v) => (setPartText((t) => ({ ...t, [c.id]: v })), setError(null))} onTone />
+              </div>
+            ))}
+          {extras.some((c) => !shown.includes(c.id)) && (
+            <div className="flex flex-wrap gap-2">
+              {extras
+                .filter((c) => !shown.includes(c.id))
+                .map((c) => (
+                  <button key={c.id} type="button" onClick={() => setShown((l) => [...l, c.id])} className="flex h-11 items-center gap-2 rounded-full bg-white/70 px-4 text-[0.9375rem] font-medium active:scale-95">
+                    <Dot color={c.color} /> + {c.label}
+                  </button>
+                ))}
+            </div>
+          )}
+          {detailed && cents !== null && <p className="num text-[0.9375rem] font-medium">Total encaissé : {formatEuros(cents)}</p>}
           {(error === 'montant-vide' || error === 'montant-invalide' || error === 'montant-trop-grand') && (
             <p role="alert" className="text-[0.875rem] font-medium text-bad">
               {ERRORS[error]}
@@ -191,19 +241,21 @@ export default function AddDay({
           )}
         </Card>
 
+        {(tipsCat || tips.trim() !== '') && (
         <Card className="flex flex-col gap-3">
-          <label htmlFor="tips" className="text-[1rem] font-semibold">
-            Pourboires (facultatif)
+          <label htmlFor="tips" className="flex items-center gap-2 text-[1rem] font-semibold">
+            <Dot color={tipsCat?.color ?? 'var(--cat-pourboires)'} /> {tipsCat?.label ?? 'Pourboires'} (facultatif)
           </label>
           <MoneyInput id="tips" value={tips} onChange={(v) => setTips(v)} />
           <p className="text-[0.8125rem] text-muted">Les pourboires te reviennent en entier : ils ne sont pas partagés.</p>
         </Card>
+        )}
 
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-3 rounded-full bg-ink py-2 pr-2 pl-6 text-white">
             <span className="flex flex-col">
-              <span className="text-[0.9375rem] font-medium">Ta part</span>
-              <span className="text-[0.75rem] text-white/75">Tu gardes {String(keepPct).replace('.', ',')} % + pourboires</span>
+              <span className="text-[0.9375rem] font-medium">{independent ? 'Recettes du jour' : 'Ta part'}</span>
+              <span className="text-[0.75rem] text-white/75">{independent ? 'Tout ce que tu as encaissé' : `Tu gardes ${String(keepPct).replace('.', ',')} %${tipsCat ? ' + pourboires' : ''}`}</span>
             </span>
             <span className="num display rounded-full bg-white px-5 py-3 text-[1.375rem] text-ink">{share === null ? '–' : formatEuros(share)}</span>
           </div>
@@ -228,7 +280,7 @@ export default function AddDay({
                 ))}
               </div>
             </Card>
-          ) : (
+          ) : independent ? null : (
             <button type="button" onClick={() => setPctOpen(true)} className="h-11 self-center text-[0.9375rem] font-medium underline underline-offset-2">
               Autre pourcentage ce jour-là ?
             </button>
@@ -276,4 +328,9 @@ export default function AddDay({
       )}
     </Screen>
   )
+}
+
+/** Pastille de couleur d'une catégorie (toujours accompagnée de son nom). */
+export function Dot({ color }: { color: string }) {
+  return <span aria-hidden="true" className="inline-block h-3 w-3 shrink-0 rounded-full" style={{ background: color }} />
 }

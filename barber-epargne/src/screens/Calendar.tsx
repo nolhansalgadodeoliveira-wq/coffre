@@ -19,18 +19,18 @@ type View = 'travaille' | 'a-saisir' | 'prevu' | 'extra' | 'repos' | 'avant'
 
 const LABEL: Record<View, string> = { travaille: 'Travaillé', 'a-saisir': 'À saisir', prevu: 'Travail prévu', extra: 'Jour en plus', repos: 'Repos', avant: 'Avant tes débuts' }
 const STYLE: Record<View, string> = {
-  travaille: 'bg-ink text-white',
-  'a-saisir': 'border-2 border-dashed border-violet-deep text-ink',
-  prevu: 'bg-violet',
-  extra: 'bg-orange',
-  repos: 'bg-transparent',
+  travaille: 'bg-day-done text-white',
+  'a-saisir': 'border-2 border-dashed border-day-todo bg-day-todo-soft text-ink',
+  prevu: 'bg-day-plan text-ink',
+  extra: 'bg-day-plan text-ink',
+  repos: 'bg-transparent text-ink',
   avant: 'bg-transparent text-muted',
 }
 const DOT: Record<View, string> = {
-  travaille: 'bg-ink',
-  'a-saisir': 'border-2 border-dashed border-violet-deep',
-  prevu: 'bg-violet',
-  extra: 'bg-orange',
+  travaille: 'bg-day-done',
+  'a-saisir': 'border-2 border-dashed border-day-todo bg-day-todo-soft',
+  prevu: 'bg-day-plan',
+  extra: 'bg-day-plan',
   repos: 'border border-ink/40',
   avant: '',
 }
@@ -38,7 +38,6 @@ const LEGEND: [View, string][] = [
   ['travaille', 'Travaillé'],
   ['a-saisir', 'À saisir'],
   ['prevu', 'Prévu'],
-  ['extra', 'En plus'],
   ['repos', 'Repos'],
 ]
 
@@ -133,6 +132,7 @@ export default function Calendar({ data, update, today, open }: ScreenProps) {
                 className={`num relative flex h-12 items-center justify-center rounded-full text-[1rem] font-medium ${STYLE[x]} ${d === selected ? 'ring-2 ring-ink ring-offset-2' : ''}`}
               >
                 {Number(d.slice(8))}
+                {x === 'extra' && <span aria-hidden="true" className="absolute top-0.5 right-1 text-[0.75rem] leading-none font-bold">+</span>}
                 {d === today && <span className={`absolute bottom-1.5 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full ${e ? 'bg-white' : 'bg-ink'}`} />}
               </button>
             )
@@ -145,10 +145,13 @@ export default function Calendar({ data, update, today, open }: ScreenProps) {
               <span className={`h-3 w-3 rounded-full ${DOT[k]}`} /> {l}
             </span>
           ))}
+          <span className="flex items-center gap-1.5 rounded-full bg-field px-3 py-1.5">
+            <span className="font-bold">+</span> Jour en plus
+          </span>
         </div>
       </Card>
 
-      <Card tone={entry ? 'dark' : v === 'extra' ? 'orange' : 'violet'} className="flex flex-col gap-4">
+      <Card tone={entry ? 'dark' : 'violet'} className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-3">
           <span className="text-[1.125rem] font-semibold first-letter:uppercase">{formatDayLong(selected)}</span>
           <Chip dark={!!entry}>{LABEL[v]}</Chip>
@@ -204,15 +207,15 @@ export default function Calendar({ data, update, today, open }: ScreenProps) {
       </Card>
 
       <div className="grid grid-cols-3 gap-3">
-        <Card tone="blue" className="flex flex-col gap-1 p-4">
+        <Card className="flex flex-col gap-1 border-l-4 border-day-done p-4">
           <span className="num display text-[2rem]">{counts.travaille}</span>
           <span className="text-[0.8125rem] text-ink/80">{counts.travaille > 1 ? 'jours travaillés' : 'jour travaillé'}</span>
         </Card>
-        <Card tone="orange" className="flex flex-col gap-1 p-4">
+        <Card className="flex flex-col gap-1 border-l-4 border-day-todo p-4">
           <span className="num display text-[2rem]">{counts.aSaisir}</span>
           <span className="text-[0.8125rem] text-ink/80">à saisir</span>
         </Card>
-        <Card tone="violet" className="flex flex-col gap-1 p-4">
+        <Card className="flex flex-col gap-1 border-l-4 border-day-plan p-4">
           <span className="num display text-[2rem]">{counts.aVenir}</span>
           <span className="text-[0.8125rem] text-ink/80">à venir</span>
         </Card>

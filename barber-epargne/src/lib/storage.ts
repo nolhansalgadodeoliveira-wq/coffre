@@ -1,8 +1,9 @@
 // Sauvegarde locale (localStorage), import / export, et conversion des anciennes données.
 
 import { currentAccount } from './accounts'
+import { entryCategories, expenseCategories, incomeCategories } from './calc'
 import { EMPTY_META, type SyncMeta } from './sync'
-import type { AppData, Bilan, Commission, DayStatus, Entry, Goal, Settings } from './types'
+import type { AppData, Bilan, CategoryDef, Commission, DayStatus, Entry, Expense, Goal, Settings } from './types'
 import { DEFAULT_SETTINGS, EMPTY_DATA, EPOCH, MAX_CLIENTS, MAX_DAY_GROSS, MAX_GOALS, MIN_DATE } from './types'
 import { addDays, isValidIso } from './dates'
 
@@ -81,6 +82,7 @@ function parseEntry(x: Record<string, unknown>, keepPct: number): Entry | null {
     amount,
     ...(tipsIn > 0 ? { tips: tipsIn } : {}),
     ...(typeof x.keepPct === 'number' && x.keepPct > 0 && x.keepPct <= 100 ? { keepPct: x.keepPct } : {}),
+    ...parseParts(x.parts, gross),
     ...(isInt(x.clients) && x.clients >= 0 && x.clients <= MAX_CLIENTS ? { clients: x.clients } : {}),
     updatedAt: stamp(x.updatedAt),
   }
@@ -107,6 +109,50 @@ function entriesFromWeekends(weekends: unknown[]): Entry[] {
     }
   }
   return out.filter((e) => e.gross <= MAX_DAY_GROSS)
+}
+
+function parseParts(v: unknown, gross: number): { parts?: Entry['parts'] } {
+  if (!v || typeof v !== 'object') return {}
+  const parts: Record<string, number> = {}
+  let total = 0
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    if (!/^[\w-]{1,40}$/.test(k) || !isInt(x) || x <= 0) continue
+    parts[k] = x
+    total += x
+  }
+  if (total === 0 || total > gross) return {}
+  return { parts }
+}
+
+const ID_RE = /^[\w-]{1,40}$/
+
+function parseCats(v: unknown): CategoryDef[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const seen = new Set<string>()
+  const out: CategoryDef[] = []
+  for (const x of v as Record<string, unknown>[]) {
+    if (!x || !isStr(x.id) || !ID_RE.test(x.id) || seen.has(x.id) || !isStr(x.label) || !x.label.trim()) continue
+    seen.add(x.id)
+    out.push({
+      id: x.id,
+      label: x.label.slice(0, 40),
+      emoji: isStr(x.emoji) && x.emoji.length <= 8 ? x.emoji : '•',
+      ...(x.kind === 'tips' || x.kind === 'home' ? { kind: x.kind } : {}),
+    })
+  }
+  return out.slice(0, 12)
+}
+
+function parseExpense(x: Record<string, unknown>): Expense | null {
+  if (!isStr(x?.id) || !ID_RE.test(x.id) || !isoOk(x.date) || !isInt(x.amount) || x.amount <= 0 || x.amount > MAX_DAY_GROSS * 10) return null
+  return {
+    id: x.id,
+    date: x.date,
+    cat: isStr(x.cat) && ID_RE.test(x.cat) ? x.cat : 'autre',
+    amount: x.amount,
+    ...(isStr(x.note) && x.note.trim() ? { note: x.note.slice(0, 80) } : {}),
+    updatedAt: stamp(x.updatedAt),
+  }
 }
 
 const MAX_GOAL = 100_000_000_00
@@ -148,6 +194,12 @@ function parseSettings(v: unknown, legacy: boolean): Settings {
     keepPct: typeof s.keepPct === 'number' && s.keepPct > 0 && s.keepPct <= 100 ? s.keepPct : DEFAULT_SETTINGS.keepPct,
     personalExpenses: clampInt(s.personalExpenses, 0, 100_000_00, DEFAULT_SETTINGS.personalExpenses),
     goals: parseGoals(s),
+    ...(isStr((s.profession as Record<string, unknown> | undefined)?.id) && isStr((s.profession as Record<string, unknown>).label)
+      ? { profession: { id: String((s.profession as Record<string, unknown>).id).slice(0, 40), label: String((s.profession as Record<string, unknown>).label).slice(0, 60) } }
+      : {}),
+    ...(parseCats(s.incomeCats)?.length ? { incomeCats: parseCats(s.incomeCats) } : {}),
+    ...(parseCats(s.expenseCats) ? { expenseCats: parseCats(s.expenseCats) } : {}),
+    ...(typeof s.homeKeepPct === 'number' && s.homeKeepPct > 0 && s.homeKeepPct <= 100 ? { homeKeepPct: s.homeKeepPct } : {}),
     commission: parseCommission(s.commission),
     // Ancienne version : l'utilisateur n'a jamais vu la présentation, on la lui montre une fois.
     onboarded: legacy ? false : s.onboarded === true,
@@ -215,10 +267,16 @@ export function parseData(input: unknown): AppData | null {
 
   const deleted: Record<string, string> = {}
   if (o.deleted && typeof o.deleted === 'object') {
-    for (const [k, v] of Object.entries(o.deleted as Record<string, unknown>)) if (/^[eb]:/.test(k) && isStr(v)) deleted[k] = v
+    for (const [k, v] of Object.entries(o.deleted as Record<string, unknown>)) if (/^[ebx]:/.test(k) && isStr(v)) deleted[k] = v
   }
 
-  return { version: 2, entries, bilans, days, deleted, settings }
+  const expenseIds = new Set<string>()
+  const expenses = (Array.isArray(o.expenses) ? (o.expenses as Record<string, unknown>[]) : [])
+    .map(parseExpense)
+    .filter((e): e is Expense => e !== null && !expenseIds.has(e.id) && Boolean(expenseIds.add(e.id)))
+    .sort((a, b) => a.date.localeCompare(b.date))
+
+  return { version: 2, entries, bilans, days, deleted, expenses, settings }
 }
 
 export function newId(): string {
@@ -228,9 +286,18 @@ export function newId(): string {
 /** Export tableur : une ligne par journée, séparateur « ; » et virgule décimale, lisible par Excel en français. */
 export function toCsv(data: AppData): string {
   const eur = (c: number) => (c / 100).toFixed(2).replace('.', ',')
-  const lines = ['date;encaissé;ta part;clients']
-  for (const e of [...data.entries].sort((a, b) => a.date.localeCompare(b.date))) lines.push(`${e.date};${eur(e.gross)};${eur(e.amount)};${e.clients ?? ''}`)
-  return '﻿' + lines.join('\r\n')
+  const cats = incomeCategories(data.settings)
+  const lines = [['date', 'encaissé', ...cats.map((c) => c.label.toLowerCase()), 'autres', 'ta part', 'part gardée (%)', 'clients'].join(';')]
+  for (const e of [...data.entries].sort((a, b) => a.date.localeCompare(b.date))) {
+    const byCat = entryCategories(e, data.settings)
+    lines.push([e.date, eur(e.gross), ...cats.map((c) => eur(byCat[c.id] ?? 0)), eur(byCat.autres ?? 0), eur(e.amount), e.keepPct ?? '', e.clients ?? ''].join(';'))
+  }
+  if (data.expenses.length) {
+    const xcats = expenseCategories(data.settings)
+    lines.push('', 'dépenses', 'date;catégorie;montant;note')
+    for (const x of data.expenses) lines.push(`${x.date};${xcats.find((c) => c.id === x.cat)?.label ?? 'Autres'};${eur(x.amount)};${(x.note ?? '').replace(/;/g, ',')}`)
+  }
+  return '\ufeff' + lines.join('\r\n')
 }
 
 // ---- État de la synchronisation, de l'accueil et des compliments, enregistrés sur l'appareil ----

@@ -11,7 +11,13 @@ import Logo from './Logo'
 import Onboarding from './screens/Onboarding'
 import { pendingDays } from './lib/calc'
 import { snapshot } from './lib/backup'
-import { loadPrefs, setBadge } from './lib/push'
+import { loadPrefs, refreshSubscription, setBadge } from './lib/push'
+import RemindersSetup from './screens/RemindersSetup'
+import Summary from './screens/Summary'
+import ExpenseScreen from './screens/ExpenseScreen'
+import MetierScreen from './screens/MetierScreen'
+import { LockScreen } from './screens/Lock'
+import { loadLock, RELOCK_AFTER_MS } from './lib/lock'
 import Home from './screens/Home'
 import AddDay from './screens/AddDay'
 import BilanScreen from './screens/BilanScreen'
@@ -29,6 +35,14 @@ export type Overlay =
   /** Liste des objectifs, et ajout / modification d'un objectif. */
   | { kind: 'objectifs' }
   | { kind: 'objectif'; goalId?: string; fromList?: boolean }
+  /** Dépense professionnelle (ajout ou modification). */
+  | { kind: 'depense'; expenseId?: string }
+  /** Métier et catégories (changer de métier, modifier les catégories). */
+  | { kind: 'metier' }
+  /** Résumé du mois ou de l'année (partageable en image). */
+  | { kind: 'resume'; period: 'mois' | 'annee'; key: string }
+  /** Assistant de configuration des rappels (serveur, une fois par le propriétaire). */
+  | { kind: 'rappels' }
   /** Revoir la présentation du premier lancement. */
   | { kind: 'presentation' }
   | null
@@ -71,8 +85,23 @@ function Main({ account }: { account: Account }) {
   useEffect(() => {
     snapshot(data, todayIso())
   }, [data])
+  // Verrou (Face ID / code) : à l'ouverture, puis après une minute en arrière-plan.
+  const [locked, setLocked] = useState(() => loadLock() !== null)
+  useEffect(() => {
+    let hiddenAt = 0
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') hiddenAt = Date.now()
+      else if (hiddenAt && Date.now() - hiddenAt > RELOCK_AFTER_MS && loadLock()) setLocked(true)
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [])
   // Copie en ligne du compte : retrouvée sur n'importe quel appareil.
   const sync = useSync(account, data, setData)
+  // Garde l'abonnement aux rappels à jour (heure, fuseau, abonnement renouvelé par le téléphone).
+  useEffect(() => {
+    void refreshSubscription(account.id)
+  }, [account.id])
 
   useEffect(() => {
     setSaveFailed(!saveData(data))
@@ -156,6 +185,8 @@ function Main({ account }: { account: Account }) {
   const update: Update = useCallback((fn) => setData((d) => fn(d)), [])
   const props: ScreenProps = { data, update, today, open, close, homeMonth, setHomeMonth, account, sync, goTab: setTab, compliment, dismissCompliment: () => setCompliment(null) }
 
+  if (locked) return <LockScreen email={account.email} onUnlock={() => setLocked(false)} />
+
   // Nouvel appareil : on récupère d'abord les données du compte (quelques secondes au plus).
   if (sync.firstPull && data.entries.length === 0 && !data.settings.onboarded) {
     return (
@@ -166,6 +197,8 @@ function Main({ account }: { account: Account }) {
     )
   }
 
+  if (overlay?.kind === 'rappels') return <RemindersSetup account={account} close={close} />
+
   // Présentation : prénom, jours travaillés, part gardée, objectif.
   if (!data.settings.onboarded || overlay?.kind === 'presentation') {
     return <Onboarding data={data} update={update} refresh={data.entries.length === 0 && !overlay ? { email: account.email, run: sync.syncNow, status: sync.status } : undefined} replay={overlay?.kind === 'presentation'} done={() => (overlay ? close() : undefined)} />
@@ -173,6 +206,9 @@ function Main({ account }: { account: Account }) {
 
   let content
   if (overlay?.kind === 'ajout') content = <AddDay {...props} entryId={overlay.entryId} month={overlay.month} date={overlay.date} />
+  else if (overlay?.kind === 'metier') content = <MetierScreen {...props} />
+  else if (overlay?.kind === 'depense') content = <ExpenseScreen {...props} expenseId={overlay.expenseId} />
+  else if (overlay?.kind === 'resume') content = <Summary {...props} period={overlay.period} periodKey={overlay.key} />
   else if (overlay?.kind === 'objectifs') content = <GoalsScreen {...props} />
   else if (overlay?.kind === 'objectif') content = <GoalEditScreen {...props} goalId={overlay.goalId} fromList={overlay.fromList} />
   else if (overlay?.kind === 'bilan') content = <BilanScreen {...props} month={overlay.month} bilanId={overlay.bilanId} />

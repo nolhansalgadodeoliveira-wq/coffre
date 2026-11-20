@@ -5,7 +5,8 @@
 // des jours habituels choisis dans les réglages, modifiables jour par jour dans le calendrier
 // (repos exceptionnel, jour en plus). Le suivi d'épargne se fait par mois civil.
 
-import type { AppData, Bilan, Commission, DayStatus, Entry, Goal } from './types'
+import type { AppData, Bilan, CategoryDef, Commission, DayStatus, Entry, Expense, Goal, Settings } from './types'
+import { BARBER } from './professions'
 import { MAX_CLIENTS, MAX_DAY_GROSS, MIN_DATE } from './types'
 import { addDays, addMonths, daysBetween, datesOfMonth, lastDayOfMonth, monthKeyOf, weekday } from './dates'
 
@@ -15,8 +16,96 @@ import { addDays, addMonths, daysBetween, datesOfMonth, lastDayOfMonth, monthKey
  */
 export function entryKeepPct(e: Entry, fallback: number): number {
   if (e.keepPct) return e.keepPct
-  if (e.gross <= 0) return fallback
+  if (e.gross <= 0 || e.parts?.domicile) return fallback
   return Math.round(((e.amount - (e.tips ?? 0)) / e.gross) * 200) / 2
+}
+
+// ---------- Catégories de recettes et de dépenses (selon le métier) ----------
+
+/** Couleurs des catégories, dans un ordre fixe validé pour le daltonisme. Au-delà de 4 : gris (avec le nom). */
+const CAT_COLORS = ['var(--cat-coupes)', 'var(--cat-produits)', 'var(--cat-pourboires)', 'var(--cat-domicile)']
+export const OTHER_COLOR = 'var(--muted)'
+export const catColor = (i: number) => CAT_COLORS[i] ?? OTHER_COLOR
+
+export interface CategoryView extends CategoryDef {
+  color: string
+}
+
+/** Catégories de recettes (celles du barbier si aucun métier n'a été choisi : la version d'origine de l'app). */
+export function incomeCategories(s: Settings): CategoryView[] {
+  return (s.incomeCats?.length ? s.incomeCats : BARBER.income).map((c, i) => ({ ...c, color: catColor(i) }))
+}
+
+/** Catégories de dépenses (aucune pour le barbier par défaut : la fonction « dépenses » reste cachée). */
+export function expenseCategories(s: Settings): CategoryView[] {
+  return (s.expenseCats ?? []).map((c, i) => ({ ...c, color: catColor(i) }))
+}
+
+export const tracksExpenses = (s: Settings) => expenseCategories(s).length > 0
+
+/** Catégorie « principale » d'un métier : celle qui reçoit le reste de l'encaissé d'une journée. */
+export function mainCategory(s: Settings): CategoryView {
+  const cats = incomeCategories(s)
+  return cats.find((c) => c.kind !== 'tips') ?? cats[0]
+}
+
+/** Encaissé d'une journée par catégorie (pourboires compris), en centimes. Une catégorie supprimée va dans « autres ». */
+export function entryCategories(e: Entry, s: Settings): Record<string, number> {
+  const cats = incomeCategories(s)
+  const out: Record<string, number> = Object.fromEntries(cats.map((c) => [c.id, 0]))
+  const tipsCat = cats.find((c) => c.kind === 'tips')
+  let rest = e.gross
+  for (const [k, v] of Object.entries(e.parts ?? {})) {
+    rest -= v
+    if (k in out && k !== tipsCat?.id) out[k] += v
+    else out.autres = (out.autres ?? 0) + v
+  }
+  out[mainCategory(s).id] += rest
+  if (e.tips) {
+    if (tipsCat) out[tipsCat.id] += e.tips
+    else out.autres = (out.autres ?? 0) + e.tips
+  }
+  return out
+}
+
+/** Total par catégorie de recette sur un ensemble de journées. */
+export function categoryTotals(entries: Entry[], s: Settings): Record<string, number> {
+  const t: Record<string, number> = {}
+  for (const e of entries) for (const [k, v] of Object.entries(entryCategories(e, s))) t[k] = (t[k] ?? 0) + v
+  return t
+}
+
+/** Total par catégorie de dépense. */
+export function expenseTotals(list: Expense[], s: Settings): Record<string, number> {
+  const known = new Set(expenseCategories(s).map((c) => c.id))
+  const t: Record<string, number> = {}
+  for (const x of list) {
+    const k = known.has(x.cat) ? x.cat : 'autres'
+    t[k] = (t[k] ?? 0) + x.amount
+  }
+  return t
+}
+
+/** Dépenses d'un mois. */
+export function expensesOfMonth(data: AppData, month: string): Expense[] {
+  return (data.expenses ?? []).filter((x) => monthKeyOf(x.date) === month)
+}
+export const costsOfMonth = (data: AppData, month: string) => expensesOfMonth(data, month).reduce((a, x) => a + x.amount, 0)
+
+/** Dépenses moyennes des 3 derniers mois terminés qui en ont : servent à estimer les mois à venir. */
+export function averageMonthlyCosts(data: AppData, today: string): number {
+  const cur = monthKeyOf(today)
+  const months = [...new Set((data.expenses ?? []).map((x) => monthKeyOf(x.date)))].filter((m) => m < cur).sort().slice(-3)
+  if (months.length === 0) return 0
+  return Math.round(months.reduce((a, m) => a + costsOfMonth(data, m), 0) / months.length)
+}
+
+/**
+ * Ta part d'un encaissé détaillé : catégories « à domicile » à leur propre part, le reste à la part du jour.
+ * `home` = montant des catégories « à domicile ».
+ */
+export function shareOf(gross: number, home: number, keepPct: number, homeKeepPct: number): number {
+  return myShare(gross - home, keepPct) + myShare(home, homeKeepPct)
 }
 
 /** Ta part d'un montant encaissé, selon la part gardée (en %), arrondie au centime. */
@@ -230,7 +319,9 @@ export function savedBilanFigures(b: Bilan, data: AppData): BilanFigures & { gap
  * ta part du mois − frais du salon − dépenses perso (jamais négative).
  */
 export function autoSaved(data: AppData, month: string): number {
-  return bilanFigures(sum(entriesOfMonth(data, month)), data.settings.personalExpenses, data.settings.commission).expected
+  // Ce qui reste du mois : recettes − dépenses professionnelles, puis − dépenses perso et frais du salon.
+  const net = Math.max(0, sum(entriesOfMonth(data, month)) - costsOfMonth(data, month))
+  return bilanFigures(net, data.settings.personalExpenses, data.settings.commission).expected
 }
 
 /**
@@ -271,6 +362,8 @@ export interface MonthProjection {
   assumedPast: number
   assumed: number
   total: number
+  /** Dépenses professionnelles du mois (estimées pour le mois en cours et à venir). */
+  costs: number
   commission: number
   expenses: number
   /** Épargne attendue sur la période : total − frais du salon − dépenses perso, jamais négative. */
@@ -298,6 +391,9 @@ export function monthProjection(data: AppData, month: string, today: string, avg
   const start = trackingStart(data, today)
   const assumed = missing.length * avg
   const total = entered + assumed
+  // Dépenses professionnelles : réelles pour un mois passé ; au moins la moyenne habituelle pour le mois en cours et à venir.
+  const actualCosts = costsOfMonth(data, month)
+  const costs = assumeThisMonth ? Math.max(actualCosts, Math.round(averageMonthlyCosts(data, today) * fraction)) : actualCosts
   const c = data.settings.commission
   const commission = !c.enabled || c.value <= 0 ? 0 : Math.min(total, c.mode === 'percent' ? Math.round((total * Math.min(c.value, 100)) / 100) : Math.round(c.value * fraction))
   const expenses = Math.round(data.settings.personalExpenses * fraction)
@@ -310,7 +406,8 @@ export function monthProjection(data: AppData, month: string, today: string, avg
     total,
     commission,
     expenses,
-    expected: Math.max(0, total - commission - expenses),
+    costs,
+    expected: Math.max(0, total - costs - commission - expenses),
     fraction,
   }
 }
@@ -393,7 +490,7 @@ export function projection(data: AppData, today: string, target = defaultTarget(
 
   // Gain par jour travaillé restant pour finir pile à l'objectif (on ignore les planchers à 0 pour rester lisible).
   const f = commission.enabled && commission.mode === 'percent' ? 1 - Math.min(commission.value, 100) / 100 : 1
-  const fixed = months.reduce((s, m) => s + m.expenses + (commission.enabled && commission.mode === 'fixed' ? Math.round(commission.value * m.fraction) : 0), 0)
+  const fixed = months.reduce((s, m) => s + m.expenses + m.costs + (commission.enabled && commission.mode === 'fixed' ? Math.round(commission.value * m.fraction) : 0), 0)
   const entered = months.reduce((s, m) => s + m.entered, 0)
   const assumedDays = months.reduce((s, m) => s + m.assumedDays, 0)
   const neededPerDay = remaining > 0 && assumedDays > 0 && f > 0 ? Math.max(0, Math.round((remaining + fixed - f * entered) / (f * assumedDays))) : 0

@@ -6,7 +6,7 @@
 // version connue ; sinon il fusionne d'abord. Chaque journée et chaque bilan portent leur date de
 // modification : en cas de doublon, la modification la plus récente gagne, et une suppression aussi.
 
-import type { AppData, Bilan, Entry } from './types'
+import type { AppData, Bilan, Entry, Expense } from './types'
 import { EMPTY_DATA } from './types'
 
 export interface RemoteDoc {
@@ -40,7 +40,7 @@ export type SyncResult =
 const MAX_ATTEMPTS = 4
 
 export function isEmptyData(d: AppData): boolean {
-  return d.entries.length === 0 && d.bilans.length === 0
+  return d.entries.length === 0 && d.bilans.length === 0 && (d.expenses?.length ?? 0) === 0
 }
 
 export function sameData(a: AppData, b: AppData): boolean {
@@ -49,6 +49,7 @@ export function sameData(a: AppData, b: AppData): boolean {
       e: [...d.entries].sort((x, y) => x.date.localeCompare(y.date)),
       b: [...d.bilans].sort((x, y) => x.month.localeCompare(y.month)),
       d: Object.entries(d.days).sort(([x], [y]) => x.localeCompare(y)),
+      xp: d.expenses ?? [],
       x: Object.entries(d.deleted).sort(([x], [y]) => x.localeCompare(y)),
       s: d.settings,
     })
@@ -83,7 +84,8 @@ export function mergeData(preferred: AppData, other: AppData): AppData {
   const bilans = mergeKeyed<Bilan>(preferred.bilans, other.bilans, (b) => b.month, deleted, 'b:').sort((a, b) => a.month.localeCompare(b.month))
   const settings = preferred.settings.updatedAt >= other.settings.updatedAt ? preferred.settings : other.settings
 
-  return { version: 2, entries, bilans, days: { ...other.days, ...preferred.days }, deleted, settings }
+  const expenses = mergeKeyed<Expense>(preferred.expenses ?? [], other.expenses ?? [], (x) => x.id, deleted, 'x:').sort((a, b) => a.date.localeCompare(b.date))
+  return { version: 2, entries, bilans, days: { ...other.days, ...preferred.days }, deleted, expenses, settings }
 }
 
 const done = (meta: SyncMeta, version: number, now: string): SyncMeta => ({ ...meta, version, dirty: false, lastSyncAt: now })

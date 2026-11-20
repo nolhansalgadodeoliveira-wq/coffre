@@ -32,6 +32,29 @@
   --bad: #b3261e;
   --bad-soft: #fbe2e0;
 
+  /*
+   * Code couleur des jours (4 statuts, pas plus) :
+   * - travaillé : vert = « fait », accompli (renforcement positif) ;
+   * - à saisir : ambre = « attention », sans l'alarme du rouge (réservé aux erreurs) ;
+   * - prévu : violet clair = calme, à venir, la couleur de l'app ;
+   * - repos : aucune couleur = rien à faire.
+   * La forme double toujours la couleur (plein / pointillés / vide) : lisible aussi par les daltoniens.
+   */
+  --day-done: #17804e;
+  --day-todo: #c77a00;
+  --day-todo-soft: #fff1d6;
+  --day-plan: #ddd4ff;
+
+  /*
+   * Catégories de revenu (palette catégorielle validée daltonisme, ordre fixe) :
+   * coupes = bleu (le cœur du métier, fiable), produits = magenta, pourboires = or (récompense),
+   * à domicile = turquoise. Toujours accompagnées de leur nom.
+   */
+  --cat-coupes: #2a78d6;
+  --cat-produits: #e87ba4;
+  --cat-pourboires: #eda100;
+  --cat-domicile: #1baf7a;
+
   /* Anciens noms gardés pour la compatibilité */
   --accent: var(--violet-deep);
   --accent-ink: #ffffff;
@@ -62,6 +85,14 @@
   --color-good-soft: var(--good-soft);
   --color-bad: var(--bad);
   --color-bad-soft: var(--bad-soft);
+  --color-day-done: var(--day-done);
+  --color-day-todo: var(--day-todo);
+  --color-day-todo-soft: var(--day-todo-soft);
+  --color-day-plan: var(--day-plan);
+  --color-cat-coupes: var(--cat-coupes);
+  --color-cat-produits: var(--cat-produits);
+  --color-cat-pourboires: var(--cat-pourboires);
+  --color-cat-domicile: var(--cat-domicile);
   --color-accent: var(--accent);
   --color-accent-ink: var(--accent-ink);
   --color-accent-soft: var(--accent-soft);

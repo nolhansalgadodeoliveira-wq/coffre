@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react'
 import type { ScreenProps } from '../App'
 import { BarChart, LineChart, type ChartPoint } from '../charts'
-import { dailyAverage, monthProjection, plural, activeGoals } from '../lib/calc'
+import { dailyAverage, monthProjection, plural, activeGoals, categoryTotals, incomeCategories } from '../lib/calc'
+import { CategoryBar } from './Summary'
 import { computeStats } from '../lib/stats'
 import { deMonth, formatDayLong, formatMonthKey, formatWeekRange, monthKeyOf, monthName, monthShort, WEEK_ORDER, WEEKDAY_LONG, WEEKDAY_SHORT } from '../lib/dates'
 import { formatEuros, formatEurosShort } from '../lib/money'
@@ -18,7 +19,7 @@ function than(change: number, ref: string): string {
 }
 const pctLabel = (n: number) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(Math.round(n))} %`
 
-export default function StatsScreen({ data, today }: ScreenProps) {
+export default function StatsScreen({ data, today, open }: ScreenProps) {
   const s = computeStats(data, today)
   const goalsTotal = activeGoals(data).reduce((a, g) => a + g.amount, 0)
   const [view, setView] = useState<'mois' | 'semaines'>('mois')
@@ -68,6 +69,23 @@ export default function StatsScreen({ data, today }: ScreenProps) {
         <Big value={formatEurosShort(s.total)} label="gagnés en tout" />
         <Big value={String(s.dayCount)} label={s.dayCount > 1 ? 'jours travaillés' : 'jour travaillé'} />
         <Big value={formatEurosShort(s.avgPerDay)} label="par jour" />
+      </Card>
+
+      <div className="grid grid-cols-2 gap-3">
+        <button type="button" onClick={() => open({ kind: 'resume', period: 'mois', key: today.slice(0, 7) })} className="h-12 rounded-full bg-ink px-4 text-[0.9375rem] font-semibold text-white active:scale-95">
+          Résumé du mois
+        </button>
+        <button type="button" onClick={() => open({ kind: 'resume', period: 'annee', key: today.slice(0, 4) })} className="h-12 rounded-full bg-surface px-4 text-[0.9375rem] font-semibold active:scale-95">
+          Résumé de l’année
+        </button>
+      </div>
+
+      <Card className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1">
+          <span className="text-[1.1875rem] font-semibold">D’où vient ton argent</span>
+          <span className="text-[0.875rem] text-muted">Tout ce que tu as encaissé, par catégorie.</span>
+        </div>
+        <CategoryBar totals={categoryTotals(data.entries.filter((e) => e.date <= today), data.settings)} cats={incomeCategories(data.settings)} />
       </Card>
 
       <Card className="flex flex-col gap-4">
