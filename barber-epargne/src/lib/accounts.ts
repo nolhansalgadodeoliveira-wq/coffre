@@ -78,16 +78,33 @@ export const rememberedEmail = (): string => {
 
 // ---- Données déjà présentes sur l'appareil ----
 
-/** Copie les données d'un ancien espace de stockage (préfixe `from`) vers celui du compte, si le compte n'a encore rien ici. */
+/** Un espace de stockage « vide » : pas de journée, pas de bilan (même si des réglages par défaut y ont été écrits). */
+function isEmptySlot(raw: string | null): boolean {
+  if (!raw) return true
+  try {
+    const d = JSON.parse(raw) as { entries?: unknown[]; bilans?: unknown[] }
+    return (d.entries?.length ?? 0) === 0 && (d.bilans?.length ?? 0) === 0
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Copie les données d'un ancien espace de stockage (préfixe `from`) vers celui du compte,
+ * sauf si le compte a déjà ses propres journées ici (elles ne sont jamais écrasées).
+ */
 function adoptLocalData(fromNs: string, toNs: string): void {
   try {
     const suffix = (ns: string) => (ns ? `@${ns}` : '')
-    const target = 'caisse-weekend:v1' + suffix(toNs)
-    if (localStorage.getItem(target)) return
+    const source = localStorage.getItem('caisse-weekend:v1' + suffix(fromNs))
+    if (isEmptySlot(source)) return
+    if (!isEmptySlot(localStorage.getItem('caisse-weekend:v1' + suffix(toNs)))) return
     for (const base of ['caisse-weekend:v1', 'coffre-copies:v1', 'coffre-derniere-sauvegarde:v1', 'coffre-compliments:v1']) {
       const v = localStorage.getItem(base + suffix(fromNs))
-      if (v !== null && localStorage.getItem(base + suffix(toNs)) === null) localStorage.setItem(base + suffix(toNs), v)
+      if (v !== null) localStorage.setItem(base + suffix(toNs), v)
     }
+    // Les données viennent de cet appareil : à envoyer au compte à la prochaine synchronisation.
+    localStorage.removeItem('coffre-sync:v1' + suffix(toNs))
   } catch {
     /* ignoré */
   }
@@ -99,8 +116,9 @@ function adoptLocalData(fromNs: string, toNs: string): void {
  */
 function claimLegacyData(ns: string): void {
   try {
-    if (localStorage.getItem(LEGACY_CLAIMED_KEY)) return
-    if (localStorage.getItem('caisse-weekend:v1')) adoptLocalData('', ns)
+    const claimedBy = localStorage.getItem(LEGACY_CLAIMED_KEY)
+    if (claimedBy && claimedBy !== ns) return
+    adoptLocalData('', ns)
     localStorage.setItem(LEGACY_CLAIMED_KEY, ns)
   } catch {
     /* ignoré */

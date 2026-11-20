@@ -13,7 +13,8 @@ import { Field, inputClass, MoneyInput, PrimaryButton } from '../ui'
 const KEEP = [100, 60, 50, 40]
 
 /** Présentation en 4 étapes. `replay` : relancée depuis les réglages (valeurs actuelles pré-remplies). */
-export default function Onboarding({ data, update, replay, done }: { data: AppData; update: Update; replay?: boolean; done: () => void }) {
+export default function Onboarding({ data, update, replay, done, refresh }: { data: AppData; update: Update; replay?: boolean; done: () => void; refresh?: { email: string; run: () => Promise<void>; status: string } }) {
+  const [refreshing, setRefreshing] = useState(false)
   const s = data.settings
   const [step, setStep] = useState(0)
   const [name, setName] = useState(s.name)
@@ -98,6 +99,26 @@ export default function Onboarding({ data, update, replay, done }: { data: AppDa
 
       {step === 0 && (
         <section className="flex flex-1 flex-col gap-5">
+          {refresh && !replay && (
+            <div className="flex flex-col gap-2 rounded-2xl bg-violet-soft p-4 text-[0.9375rem]">
+              <span>
+                <strong>Tu as déjà utilisé Coffre ?</strong> Tes données sont dans ton compte ({refresh.email}) seulement si elles ont été envoyées depuis l’autre appareil : ouvre l’app dessus, connecté à ce compte, puis reviens ici.
+              </span>
+              <button
+                type="button"
+                disabled={refreshing}
+                onClick={() => {
+                  setRefreshing(true)
+                  void refresh.run().finally(() => setRefreshing(false))
+                }}
+                className="h-11 self-start rounded-full bg-ink px-5 font-semibold text-white active:scale-95"
+              >
+                {refreshing ? 'Recherche…' : 'Retrouver mes données'}
+              </button>
+              {refresh.status === 'offline' && <span className="text-[0.8125rem]">Pas de connexion internet pour l’instant.</span>}
+              {refresh.status === 'synced' && !refreshing && <span className="text-[0.8125rem]">Aucune donnée trouvée dans ce compte pour l’instant.</span>}
+            </div>
+          )}
           <div className="relative overflow-hidden rounded-[32px] bg-violet p-6">
             <Shapes variant="small" className="bob absolute -top-2 -right-3 h-28 w-28" />
             <h1 className="display relative max-w-[70%] text-[2.125rem]">Faisons connaissance</h1>

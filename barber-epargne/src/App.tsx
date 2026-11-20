@@ -168,7 +168,7 @@ function Main({ account }: { account: Account }) {
 
   // Présentation : prénom, jours travaillés, part gardée, objectif.
   if (!data.settings.onboarded || overlay?.kind === 'presentation') {
-    return <Onboarding data={data} update={update} replay={overlay?.kind === 'presentation'} done={() => (overlay ? close() : undefined)} />
+    return <Onboarding data={data} update={update} refresh={data.entries.length === 0 && !overlay ? { email: account.email, run: sync.syncNow, status: sync.status } : undefined} replay={overlay?.kind === 'presentation'} done={() => (overlay ? close() : undefined)} />
   }
 
   let content
