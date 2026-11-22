@@ -3,7 +3,7 @@
 
 import type { AppData } from './types'
 import { addMonths, daysBetween, mondayOf, monthKeyOf, weekday } from './dates'
-import { autoSaved, monthsWithData, monthTotals, savedBilanFigures, sortEntries, totalSaved } from './calc'
+import { autoSaved, baselineDay, savedAfterBaseline, monthsWithData, monthTotals, savedBilanFigures, sortEntries, totalSaved } from './calc'
 
 export interface Stats {
   dayCount: number
@@ -100,10 +100,12 @@ export function computeStats(data: AppData, today: string): Stats {
   const saved = totalSaved(data, today)
   // Épargne mois par mois (mois terminés) : montant du bilan s'il existe, sinon calcul automatique.
   const base = data.settings.savedBaseline
-  const savedMonths = [...new Set([...bilans.map((b) => b.month), ...monthsWithData(data).filter((m) => m < currentKey)])].filter((m) => !base || m > base.month).sort()
+  const savedMonths = [...new Set([...bilans.map((b) => b.month), ...monthsWithData(data).filter((m) => m <= currentKey)])].filter((m) => !base || m > base.month).sort()
   const savedOf = (m: string) => bilans.find((b) => b.month === m)?.actual ?? autoSaved(data, m)
   const earnedSaved = savedMonths.reduce((s, m) => s + (totals.get(m) ?? 0), 0)
-  let running = base?.amount ?? 0
+  // Montant saisi à la main + ce qui a été gagné après, le même mois.
+  const baseTotal = base ? base.amount + savedAfterBaseline(data, base.month, baselineDay(data)!) : 0
+  let running = baseTotal
 
   return {
     dayCount,
@@ -131,6 +133,6 @@ export function computeStats(data: AppData, today: string): Stats {
     gapTotal: figures.reduce((s, f) => s + f.gap, 0),
     monthsAhead: figures.filter((f) => f.gap > 0).length,
     monthsBehind: figures.filter((f) => f.gap < 0).length,
-    cumulative: [...(base ? [{ month: base.month, cumulative: base.amount }] : []), ...savedMonths.map((m) => ({ month: m, cumulative: (running += savedOf(m)) }))],
+    cumulative: [...(base ? [{ month: base.month, cumulative: baseTotal }] : []), ...savedMonths.map((m) => ({ month: m, cumulative: (running += savedOf(m)) }))],
   }
 }

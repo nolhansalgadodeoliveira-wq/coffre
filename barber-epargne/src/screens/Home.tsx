@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import type { ScreenProps } from '../App'
 import { nowIso } from '../App'
 import { loadPrefs } from '../lib/push'
-import { autoSaved, estimateEntries, averageMonthlyCosts, costsOfMonth, tracksExpenses, trackingStart, dailyAverage, dayStatus, entriesOfMonth, goalsPlan, MIN_DAYS_FOR_ESTIMATE, monthProjection, monthsWithData, monthSummary, nextGoal, pendingDays, plannedDaysOfMonth, plural } from '../lib/calc'
+import { autoSaved, monthStatus, estimateEntries, costsOfMonth, tracksExpenses, trackingStart, dailyAverage, dayStatus, entriesOfMonth, goalsPlan, MIN_DAYS_FOR_ESTIMATE, monthProjection, monthsWithData, monthSummary, nextGoal, pendingDays, plural } from '../lib/calc'
 import { addDays, addMonths, datesOfMonth, formatDay, formatDayLong, mondayOf, monthKeyOf, monthName, weekday, WEEKDAY_SHORT } from '../lib/dates'
 import { formatEuros, formatEurosShort, formatSigned } from '../lib/money'
+import { useCelebration, useCountUp, useGrow } from '../lib/celebrate'
 import { backupDue, lastBackupAt, saveBackupFile } from '../lib/backup'
 import { newId, scoped } from '../lib/storage'
 import type { Bilan } from '../lib/types'
@@ -79,15 +80,6 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
   // Dépenses professionnelles du mois affiché (métiers avec charges).
   const withCosts = tracksExpenses(s)
   const costs = costsOfMonth(data, month)
-  // Objectif du mois, exprimé en ENCAISSÉ (ce que tu vois à la caisse) : de quoi tenir tous tes objectifs.
-  const c = s.commission
-  const needShare =
-    plan.perMonth > 0 ? Math.round((plan.perMonth + s.personalExpenses + Math.max(costs, averageMonthlyCosts(data, today)) + (c.enabled && c.mode === 'fixed' ? c.value : 0)) / (c.enabled && c.mode === 'percent' ? Math.max(0.01, 1 - c.value / 100) : 1)) : 0
-  const needGross = Math.round((needShare * 100) / s.keepPct)
-  const grossSoFar = entries.reduce((a, e) => a + e.gross, 0)
-  const daysLeftInMonth = plannedDaysOfMonth(data, month).filter((d) => d >= today && !sum.entered.includes(d)).length
-  const target = isCurrent && needGross > 0 ? { needGross, perDay: daysLeftInMonth > 0 ? Math.max(0, Math.round((needGross - grossSoFar) / daysLeftInMonth)) : 0, reached: grossSoFar >= needGross } : null
-
   // Fin du mois estimée à ce rythme (mois en cours ou à venir).
   const est = month >= cur && data.entries.length > 0 ? monthProjection(data, month, today, avg) : null
   // Épargne d'un mois terminé : bilan s'il existe, sinon calcul automatique.
@@ -97,6 +89,36 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
   const monthSaved = month < cur && sum.hasData && !coveredByBase ? (sum.bilan ? sum.bilan.actual : autoSaved(data, month)) : null
 
   // Le rappel de fichier de sauvegarde ne sert que si la copie en ligne ne passe pas.
+  // ---- Progression animée : ce qui a changé depuis le dernier affichage de l'accueil (une journée saisie…) ----
+  const status = monthStatus(data, cur)
+  const celebration = useCelebration({ month: cur, available: plan.available, goals: Object.fromEntries(plan.goals.map((g) => [g.goal.id, g.saved])), covered: status.covered })
+  const fromSaved = celebration?.kind === 'saved' ? celebration.from : null
+  const shownAvailable = useCountUp(plan.available, fromSaved ? fromSaved.available : null)
+  const progressNow = Object.fromEntries(plan.goals.map((g) => [g.goal.id, g.progress]))
+  const progressFrom = fromSaved ? Object.fromEntries(plan.goals.map((g) => [g.goal.id, g.goal.amount > 0 ? Math.min(1, (fromSaved.goals[g.goal.id] ?? 0) / g.goal.amount) : 0])) : null
+  const shownProgress = useGrow(progressNow, progressFrom)
+  const coverFrom = celebration && celebration.from.month === cur ? celebration.from.covered : null
+  const shownCover = useGrow(status.covered, coverFrom)
+  // L'objectif qui a le plus avancé, pour une phrase claire : « 💍 Mariage : 43 % → 45 % ».
+  const moved = progressFrom
+    ? plan.goals
+        .map((g) => ({ g, before: Math.round((progressFrom[g.goal.id] ?? 0) * 100), after: Math.round(g.progress * 100) }))
+        .filter((x) => x.after > x.before)
+        .sort((a, b) => b.after - b.before - (a.after - a.before))[0]
+    : undefined
+  // La progression doit se VOIR : on amène la carte concernée au centre de l'écran, puis l'animation démarre.
+  const goalsRef = useRef<HTMLDivElement>(null)
+  const monthRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!celebration) return
+    ;(navigator as Navigator & { vibrate?: (p: number) => boolean }).vibrate?.(18)
+    const t = setTimeout(() => {
+      const el = celebration.kind === 'saved' ? goalsRef.current : monthRef.current
+      el?.scrollIntoView({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' })
+    }, 80)
+    return () => clearTimeout(t)
+  }, [celebration])
+
   const showBackup = !backupHidden && !sync.lastSyncAt && backupDue(data, lastBackupAt())
   const enough = plan.enoughData
   // Les estimations ne se fondent que sur les journées d'après le montant déjà coffré (s'il y en a un).
@@ -196,7 +218,8 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
       )}
 
       {/* Objectifs : épargne répartie par date, le plus proche d'abord */}
-      <Card className="flex flex-col gap-4">
+      <div ref={goalsRef}>
+      <Card className={`flex flex-col gap-4 ${fromSaved ? 'card-glow' : ''}`}>
         <div className="flex items-center justify-between gap-3">
           <Chip className="bg-violet-soft">{plan.goals.length > 1 ? 'Mes objectifs' : 'Mon objectif'}</Chip>
           <button type="button" onClick={() => open({ kind: 'objectifs' })} className="h-11 rounded-full px-3 text-[0.875rem] font-semibold active:scale-95">
@@ -204,9 +227,24 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
           </button>
         </div>
         <div className="flex items-end justify-between gap-3">
-          <span className="flex flex-col">
+          <span className="relative flex flex-col">
             <span className="text-[0.875rem] text-muted">Déjà de côté</span>
-            <span className="num display text-[2.25rem]">{formatEurosShort(plan.available)}</span>
+            <span className={`num display text-[2.25rem] ${fromSaved ? 'amount-pulse' : ''}`} aria-live="polite">
+              {formatEurosShort(shownAvailable)}
+            </span>
+            {fromSaved && celebration && (
+              <>
+                {/* Pièces qui tombent dans le coffre, puis « +X € » qui s'envole. */}
+                {[0, 1, 2].map((i) => (
+                  <span key={i} aria-hidden="true" className="coin-drop pointer-events-none absolute bottom-3 text-[1.25rem]" style={{ left: `${30 + i * 26}px`, animationDelay: `${i * 0.16}s` }}>
+                    🪙
+                  </span>
+                ))}
+                <span role="status" className="gain-rise absolute -top-3 left-24 rounded-full bg-good px-3 py-1 text-[0.875rem] font-semibold whitespace-nowrap text-white shadow-md">
+                  + {formatEurosShort(celebration.gain)} coffrés
+                </span>
+              </>
+            )}
           </span>
           {plan.goals.length > 0 && (
             <span className="num pb-1 text-right text-[0.9375rem] text-muted">
@@ -233,7 +271,14 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
                       <span className="font-semibold text-ink">{formatEurosShort(g.saved)}</span> / {formatEurosShort(g.goal.amount)}
                     </span>
                   </span>
-                  <ProgressBar value={g.progress} label={`${g.goal.name} : ${Math.round(g.progress * 100)} %`} className="h-3 bg-line" fill={g.reached ? 'bg-good' : 'bg-violet-deep'} />
+                  <ProgressBar
+                    value={shownProgress[g.goal.id] ?? g.progress}
+                    label={`${g.goal.name} : ${Math.round(g.progress * 100)} %`}
+                    className="h-3 bg-line"
+                    fill={g.reached ? 'bg-good' : 'bg-violet-deep'}
+                    slow={!!progressFrom}
+                    shine={!!progressFrom && (progressFrom[g.goal.id] ?? 0) < g.progress}
+                  />
                   <span className={`text-[0.8125rem] ${g.reached ? 'font-medium text-good' : 'text-muted'}`}>
                     {g.reached
                       ? 'Atteint ✓'
@@ -247,6 +292,15 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
           </ul>
         )}
 
+        {moved && (
+          <p className="gain-line rounded-2xl bg-good-soft p-3 text-[0.9375rem]">
+            Ta journée t’a rapproché de ton objectif : {moved.g.goal.emoji} <strong>{moved.g.goal.name}</strong>{' '}
+            <span className="num">
+              {moved.before} % → <strong>{moved.after} %</strong>
+            </span>
+          </p>
+        )}
+
         {plan.goals.length > 0 && !plan.goals.every((g) => g.reached) && (
           <p className="rounded-2xl bg-field p-3 text-[0.9375rem]">
             {!enough
@@ -257,6 +311,7 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
           </p>
         )}
       </Card>
+      </div>
 
       {/* Mois */}
       <Card tone="violet" className="relative overflow-hidden p-6">
@@ -291,21 +346,24 @@ export default function Home({ data, update, sync, today, open, homeMonth: month
             </div>
           )}
 
-          {target && (
-            <div className="flex flex-col gap-2 rounded-2xl bg-white/55 p-3">
+          {isCurrent && status.needed > 0 && data.entries.length > 0 && (
+            <div ref={monthRef} className="relative flex flex-col gap-2 rounded-2xl bg-white/55 p-3">
+              {celebration?.kind === 'covered' && (
+                <span role="status" className="gain-rise absolute -top-3 right-3 rounded-full bg-ink px-3 py-1 text-[0.8125rem] font-semibold text-white shadow-md">
+                  + {formatEurosShort(celebration.gain)} pour tes dépenses
+                </span>
+              )}
               <div className="flex items-baseline justify-between gap-3 text-[0.875rem]">
-                <span className="font-semibold">Objectif du mois</span>
+                <span className="font-semibold">Dépenses du mois couvertes</span>
                 <span className="num">
-                  <strong>{formatEurosShort(grossSoFar)}</strong> / {formatEurosShort(target.needGross)} encaissés
+                  <strong>{formatEurosShort(status.covered)}</strong> / {formatEurosShort(status.needed)}
                 </span>
               </div>
-              <ProgressBar value={grossSoFar / target.needGross} label={`Objectif du mois : ${Math.round((grossSoFar / target.needGross) * 100)} %`} className="h-2.5 bg-white/70" fill={target.reached ? 'bg-good' : 'bg-ink'} />
+              <ProgressBar value={shownCover / status.needed} label={`Dépenses du mois couvertes : ${Math.round((status.covered / status.needed) * 100)} %`} className="h-2.5 bg-white/70" fill={status.covered >= status.needed ? 'bg-good' : 'bg-ink'} slow={coverFrom !== null} shine={coverFrom !== null} />
               <span className="text-[0.8125rem] text-ink/85">
-                {target.reached
-                  ? 'Atteint : tes objectifs sont tenus ce mois-ci. ✓'
-                  : daysLeftInMonth > 0
-                    ? `Encaisse environ ${formatEurosShort(target.perDay)} par jour sur les ${plural(daysLeftInMonth, 'jour prévu restant', 'jours prévus restants')}.`
-                    : 'Plus de jour prévu ce mois-ci.'}
+                {status.covered >= status.needed
+                  ? `Tes dépenses sont couvertes : chaque euro de plus va dans ton coffre (${formatEurosShort(status.saved)} ce mois-ci).`
+                  : `Encore ${formatEurosShort(status.needed - status.covered)}, et tout le reste ira directement dans ton coffre.`}
               </span>
             </div>
           )}

@@ -349,32 +349,68 @@ export function afterBaseline(data: AppData, x: { date: string; updatedAt: strin
 }
 
 /**
- * Épargne du mois de la saisie APRÈS la saisie : ce qui a été gagné ensuite, moins les dépenses d'après,
- * moins les dépenses perso et les frais fixes au prorata des jours restants.
+ * Épargne du mois de la saisie APRÈS la saisie. Les dépenses perso et frais du mois restent ceux du mois ENTIER
+ * (pas de prorata) : les journées d'avant la saisie en ont déjà payé une partie, celles d'après paient le reste,
+ * puis tout ce qui dépasse s'ajoute au coffre. (Ce qui dépassait avant la saisie est déjà dans le montant saisi.)
  */
-export function savedAfterBaseline(data: AppData, month: string, fromDay: string): number {
-  const all = datesOfMonth(month)
-  const fraction = all.length ? all.filter((d) => d > fromDay).length / all.length : 0
-  const share = sum(entriesOfMonth(data, month).filter((e) => afterBaseline(data, e)))
-  const costs = expensesOfMonth(data, month)
-    .filter((x) => afterBaseline(data, x))
-    .reduce((a, x) => a + x.amount, 0)
-  const c = data.settings.commission
-  const commission = c.mode === 'fixed' ? { ...c, value: Math.round(c.value * fraction) } : c
-  return bilanFigures(Math.max(0, share - costs), Math.round(data.settings.personalExpenses * fraction), commission).expected
+export function savedAfterBaseline(data: AppData, month: string, _fromDay?: string): number {
+  const { before, all } = baselineNets(data, month)
+  const s = data.settings
+  return Math.max(0, bilanFigures(all, s.personalExpenses, s.commission).expected - bilanFigures(before, s.personalExpenses, s.commission).expected)
 }
 
-export function totalSaved(data: AppData, today: string): number {
+/** Ce qui reste du mois de la saisie (recettes − dépenses pro), avant la saisie et sur tout le mois. */
+function baselineNets(data: AppData, month: string): { before: number; all: number } {
+  const net = (keep: (x: { date: string; updatedAt: string }) => boolean) =>
+    Math.max(0, sum(entriesOfMonth(data, month).filter(keep)) - expensesOfMonth(data, month).filter(keep).reduce((a, x) => a + x.amount, 0))
+  return { before: net((x) => !afterBaseline(data, x)), all: net(() => true) }
+}
+
+/**
+ * Déjà mis de côté. Le mois en cours compte TOUT DE SUITE : chaque journée saisie couvre d'abord les dépenses
+ * perso (et frais) du mois, puis tout le reste s'ajoute à l'épargne. `includeCurrent: false` : sans le mois en
+ * cours (base des estimations, qui comptent déjà ce mois-ci en entier).
+ */
+export function totalSaved(data: AppData, today: string, includeCurrent = true): number {
   const cur = monthKeyOf(today)
   const base = data.settings.savedBaseline
   const billed = new Map(data.bilans.map((b) => [b.month, b.actual]))
-  // Montant saisi à la main : il remplace tout ce qui précède ; la fin du mois de la saisie et les mois suivants s'ajoutent.
-  const counted = (m: string) => !base || m > base.month
+  const inRange = (m: string) => m < cur || (includeCurrent && m === cur)
+  // Montant saisi à la main : il remplace tout ce qui précède ; la suite du mois de la saisie et les mois suivants s'ajoutent.
+  const counted = (m: string) => (!base || m > base.month) && inRange(m)
   let total = base?.amount ?? 0
   for (const b of data.bilans) if (counted(b.month)) total += b.actual
-  for (const m of monthsWithData(data)) if (m < cur && counted(m) && !billed.has(m)) total += autoSaved(data, m)
-  if (base && base.month < cur) total += savedAfterBaseline(data, base.month, baselineDay(data)!)
+  for (const m of monthsWithData(data)) if (counted(m) && !billed.has(m)) total += autoSaved(data, m)
+  if (base && inRange(base.month)) total += savedAfterBaseline(data, base.month, baselineDay(data)!)
   return total
+}
+
+export interface MonthStatus {
+  /** Ce qui reste du mois jusqu'ici : recettes − dépenses professionnelles. */
+  net: number
+  /** Dépenses perso (et frais fixes) à couvrir ce mois-ci avant d'épargner. */
+  needed: number
+  /** Partie déjà couverte. */
+  covered: number
+  /** Mis de côté ce mois-ci (ce qui dépasse les dépenses). */
+  saved: number
+}
+
+/**
+ * Où en est un mois : dépenses perso (et frais) du mois entier couvertes, puis épargne.
+ * Mois de la saisie du montant déjà coffré : `saved` = seulement ce qui s'est ajouté au coffre depuis la saisie.
+ */
+export function monthStatus(data: AppData, month: string): MonthStatus {
+  const base = data.settings.savedBaseline
+  const isBaseMonth = !!base && base.month === month
+  const net = Math.max(0, sum(entriesOfMonth(data, month)) - costsOfMonth(data, month))
+  const c = data.settings.commission
+  const fixed = c.enabled && c.mode === 'fixed' ? c.value : 0
+  const pct = c.enabled && c.mode === 'percent' ? Math.round((net * Math.min(c.value, 100)) / 100) : 0
+  const needed = data.settings.personalExpenses + fixed + pct
+  const bilan = data.bilans.find((b) => b.month === month)
+  const saved = isBaseMonth ? savedAfterBaseline(data, month) : bilan ? bilan.actual : Math.max(0, net - needed)
+  return { net, needed, covered: Math.min(net, needed), saved }
 }
 
 /** Montant calculé par l'app, sans tenir compte d'un montant saisi à la main. */
@@ -509,8 +545,8 @@ export function spentOnGoals(data: AppData): number {
 }
 
 /** Épargne disponible : déjà mis de côté − ce qui a été utilisé pour des objectifs réalisés. */
-export function availableSavings(data: AppData, today: string): number {
-  return Math.max(0, totalSaved(data, today) - spentOnGoals(data))
+export function availableSavings(data: AppData, today: string, includeCurrent = true): number {
+  return Math.max(0, totalSaved(data, today, includeCurrent) - spentOnGoals(data))
 }
 
 /** Cible par défaut d'une estimation : tous les objectifs en cours, jusqu'au plus lointain. */
@@ -529,6 +565,8 @@ export function projection(data: AppData, today: string, target = defaultTarget(
   const { commission } = data.settings
   const avg = dailyAverage(data, today)
   const saved = availableSavings(data, today)
+  // Les estimations comptent le mois en cours en entier : on part de l'épargne SANS lui (pas de double compte).
+  const savedBefore = availableSavings(data, today, false)
   const billed = billedMonths(data)
   const cur = monthKeyOf(today)
   const goalMonth = monthKeyOf(goalDate)
@@ -547,7 +585,7 @@ export function projection(data: AppData, today: string, target = defaultTarget(
     }
   }
 
-  const projected = saved + months.reduce((s, m) => s + m.expected, 0)
+  const projected = savedBefore + months.reduce((s, m) => s + m.expected, 0)
   const remaining = Math.max(0, goalAmount - saved)
   const daysLeft = Math.max(0, daysBetween(today, goalDate))
   const monthsLeft = daysLeft / 30.44
@@ -621,10 +659,14 @@ export function goalsPlan(data: AppData, today: string): GoalsPlan {
   const available = availableSavings(data, today)
   const goals = activeGoals(data)
   let pool = available
+  // Au début du mois (sans ce qui a été gagné ce mois-ci) : sert au « par mois », qui reste stable pendant le mois.
+  let poolStart = availableSavings(data, today, false)
   let before = 0
   const plans: GoalPlan[] = goals.map((goal) => {
     const saved = Math.min(goal.amount, pool)
     pool -= saved
+    const savedStart = Math.min(goal.amount, poolStart)
+    poolStart -= savedStart
     const daysLeft = Math.max(0, daysBetween(today, goal.date))
     const passed = today >= goal.date
     const remaining = goal.amount - saved
@@ -632,7 +674,8 @@ export function goalsPlan(data: AppData, today: string): GoalsPlan {
     const p = projection(data, today, { amount: before + goal.amount, date: goal.date })
     const projected = data.entries.length === 0 ? saved : Math.max(saved, Math.min(goal.amount, p.projected - before))
     before += goal.amount
-    const months = daysLeft / 30.44
+    // Mois restants comptés depuis le début du mois en cours (le mois en cours compris).
+    const months = Math.max(0, daysBetween(`${monthKeyOf(today)}-01`, goal.date)) / 30.44
     return {
       goal,
       saved,
@@ -644,7 +687,7 @@ export function goalsPlan(data: AppData, today: string): GoalsPlan {
       reached: remaining <= 0,
       passed,
       daysLeft,
-      perMonth: remaining > 0 && !passed ? Math.round(remaining / Math.max(months, 1)) : 0,
+      perMonth: goal.amount - savedStart > 0 && !passed ? Math.round((goal.amount - savedStart) / Math.max(months, 1)) : 0,
     }
   })
 

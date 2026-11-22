@@ -189,3 +189,112 @@
     animation: none !important;
   }
 }
+
+/* ---- Célébration d'une progression (après une journée saisie) ---- */
+@keyframes gain-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.85);
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(0) scale(1.06);
+  }
+  25% {
+    transform: translateY(0) scale(1);
+  }
+  80% {
+    opacity: 1;
+    transform: translateY(-6px);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-18px);
+  }
+}
+.gain-rise {
+  animation: gain-rise 3.2s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* Pièces qui tombent dans le coffre. */
+@keyframes coin-drop {
+  0% {
+    opacity: 0;
+    transform: translateY(-46px) rotate(-30deg);
+  }
+  20% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(0) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(4px) scale(0.6);
+  }
+}
+.coin-drop {
+  animation: coin-drop 1.1s cubic-bezier(0.5, 0, 0.75, 0) both;
+}
+
+/* Le montant « respire » quand il augmente. */
+@keyframes amount-pulse {
+  40% {
+    transform: scale(1.08);
+    color: var(--good);
+  }
+}
+.amount-pulse {
+  animation: amount-pulse 1.4s ease-out 0.9s both;
+  transform-origin: left bottom;
+}
+
+/* Reflet qui balaie une barre qui vient de progresser. */
+@keyframes bar-shine {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(220%);
+  }
+}
+.bar-shine {
+  position: relative;
+  overflow: hidden;
+}
+.bar-shine::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+  animation: bar-shine 1.1s ease-out 1.2s both;
+}
+
+/* Contour de la carte qui s'illumine doucement. */
+@keyframes card-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(23, 128, 78, 0);
+  }
+  35% {
+    box-shadow: 0 0 0 4px rgba(23, 128, 78, 0.28);
+  }
+}
+.card-glow {
+  animation: card-glow 2.4s ease-out 0.6s both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gain-rise,
+  .coin-drop,
+  .amount-pulse,
+  .card-glow,
+  .bar-shine::after {
+    animation: none !important;
+  }
+  .coin-drop {
+    display: none;
+  }
+}

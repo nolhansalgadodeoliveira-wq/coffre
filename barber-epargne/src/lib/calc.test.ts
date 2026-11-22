@@ -26,6 +26,7 @@ import {
   changeWorkdays,
   computedSaved,
   totalSaved,
+  monthStatus,
   availableSavings,
   enoughForEstimate,
   estimateEntries,
@@ -326,9 +327,9 @@ describe('projection : même gain sur tous les jours prévus', () => {
   it('plusieurs objectifs : combien mettre de côté par mois pour chacun', () => {
     const d = data({ settings: { goals: [goal('ski', 'Ski', 600, '2026-12-19'), goal('mariage', 'Mariage', 6000, '2027-04-19')] } })
     const plan = goalsPlan(d, today)
-    // Ski : 600 € en 1 mois (minimum 1 mois) ; mariage : 6 000 € en 5 mois.
-    expect(plan.goals[0].perMonth).toBe(60000)
-    expect(plan.goals[1].perMonth).toBe(Math.round(600000 / (151 / 30.44)))
+    // Comptés depuis le début du mois en cours (stable pendant le mois) : ski du 1er novembre au 19 décembre, mariage jusqu'au 19 avril.
+    expect(plan.goals[0].perMonth).toBe(Math.round(60000 / (48 / 30.44)))
+    expect(plan.goals[1].perMonth).toBe(Math.round(600000 / (169 / 30.44)))
     expect(plan.perMonth).toBe(plan.goals[0].perMonth + plan.goals[1].perMonth)
   })
 
@@ -507,8 +508,10 @@ describe('montant déjà coffré saisi à la main', () => {
   })
   it('les mois suivants s’ajoutent automatiquement', () => {
     const d = data({ entries: [e('2026-10-03', 1000), e('2026-11-14', 1000), e('2026-12-05', 1000)], settings: { savedBaseline: { amount: 100000, month: '2026-10' } } })
-    // Novembre (terminé le 1er décembre) : 1 000 − 300 = 700 ; décembre pas encore terminé.
-    expect(totalSaved(d, '2026-12-02')).toBe(100000 + 70000)
+    // Novembre : 1 000 − 300 = 700 ; décembre compte déjà, en cours : 1 000 − 300 = 700.
+    expect(totalSaved(d, '2026-12-06')).toBe(100000 + 70000 + 70000)
+    // Sans le mois en cours (base des estimations) :
+    expect(totalSaved(d, '2026-12-06', false)).toBe(100000 + 70000)
   })
 })
 
@@ -520,12 +523,21 @@ describe('montant déjà coffré : cohérence de tous les calculs', () => {
     data({ ...extra, settings: { savedBaseline: { amount: 200000, month: '2026-11', at }, ...settings } })
   const ent = (date: string, euros: number, updatedAt = T): Entry => ({ ...e(date, euros), updatedAt })
 
-  it('la fin du mois de la saisie s’ajoute une fois le mois terminé (dépenses perso au prorata)', () => {
+  it('mois de la saisie : les dépenses perso du mois ENTIER, payées d’abord par les journées d’avant la saisie', () => {
     const d = withBase({ entries: [ent('2026-11-14', 300), ent('2026-11-21', 200), ent('2026-11-28', 200)] })
-    // Pendant le mois : seul le montant saisi compte.
-    expect(totalSaved(d, '2026-11-25')).toBe(200000)
-    // Le mois fini : + (400 € gagnés après le 20) − 300 € × 10/30 jours restants.
-    expect(totalSaved(d, '2026-12-02')).toBe(200000 + 40000 - 10000)
+    // Les 300 € du 14 ont déjà payé les 300 € de dépenses : les 400 € d'après vont entiers au coffre.
+    expect(totalSaved(d, '2026-11-29')).toBe(200000 + 40000)
+    expect(totalSaved(d, '2026-12-02')).toBe(200000 + 40000)
+    expect(monthStatus(d, '2026-11')).toMatchObject({ needed: 30000, covered: 30000, saved: 40000 })
+  })
+
+  it('mois de la saisie sans journée avant : il faut d’abord couvrir les 300 € entiers (pas de prorata)', () => {
+    const d = withBase({ entries: [ent('2026-11-21', 109), ent('2026-11-22', 109)] })
+    expect(monthStatus(d, '2026-11')).toMatchObject({ needed: 30000, covered: 21800, saved: 0 })
+    expect(totalSaved(d, '2026-11-22')).toBe(200000)
+    const d2 = withBase({ entries: [ent('2026-11-21', 200), ent('2026-11-22', 200)] })
+    expect(monthStatus(d2, '2026-11')).toMatchObject({ needed: 30000, covered: 30000, saved: 10000 })
+    expect(totalSaved(d2, '2026-11-22')).toBe(210000)
   })
 
   it('le jour de la saisie : une journée saisie après compte, une journée saisie avant non', () => {
@@ -564,5 +576,24 @@ describe('montant déjà coffré : cohérence de tous les calculs', () => {
   it('la moyenne d’épargne des derniers mois ignore les mois couverts par le montant saisi', () => {
     const d = data({ entries: [e('2026-09-05', 1000), e('2026-10-03', 2000)], settings: { savedBaseline: { amount: 100000, month: '2026-09', at: '2026-09-30T20:00:00.000Z' }, goalAmount: 800000 } })
     expect(goalsPlan(d, '2026-11-19').avgSavedPerMonth).toBe(200000 - 30000)
+  })
+})
+
+describe('une journée saisie compte tout de suite', () => {
+  const today = '2026-11-19'
+  it('elle couvre d’abord les dépenses perso du mois, puis s’ajoute à l’épargne', () => {
+    const d1 = data({ entries: [e('2026-11-07', 200)] })
+    expect(monthStatus(d1, '2026-11')).toEqual({ net: 20000, needed: 30000, covered: 20000, saved: 0 })
+    expect(totalSaved(d1, today)).toBe(0)
+    const d2 = data({ entries: [e('2026-11-07', 200), e('2026-11-08', 250)] })
+    expect(monthStatus(d2, '2026-11')).toEqual({ net: 45000, needed: 30000, covered: 30000, saved: 15000 })
+    expect(totalSaved(d2, today)).toBe(15000)
+  })
+  it('les estimations ne comptent pas deux fois le mois en cours', () => {
+    const d = data({ entries: [e('2026-11-07', 200), e('2026-11-08', 250)], settings: { goalAmount: 800000, goalDate: '2026-12-01' } })
+    const p = projection(d, today)
+    expect(p.saved).toBe(15000)
+    // Novembre entier estimé une seule fois : 9 jours prévus, 2 saisis (450 €), 7 à la moyenne (225 €) − 300 €.
+    expect(p.projected).toBe(45000 + 7 * 22500 - 30000)
   })
 })

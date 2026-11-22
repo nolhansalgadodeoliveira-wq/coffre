@@ -58,11 +58,11 @@ export function Toggle({ checked, onChange, id, label }: { checked: boolean; onC
 }
 
 /** Barre de progression accessible. */
-export function ProgressBar({ value, label, className = 'h-3 bg-white/60', fill = 'bg-ink' }: { value: number; label: string; className?: string; fill?: string }) {
+export function ProgressBar({ value, label, className = 'h-3 bg-white/60', fill = 'bg-ink', slow, shine }: { value: number; label: string; className?: string; fill?: string; slow?: boolean; shine?: boolean }) {
   const pct = Math.round(Math.min(1, Math.max(0, value)) * 100)
   return (
     <span className={`block overflow-hidden rounded-full ${className}`} role="progressbar" aria-label={label} aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-      <span className={`block h-full rounded-full transition-[width] duration-700 ${fill}`} style={{ width: `${Math.max(pct, value > 0 ? 3 : 0)}%` }} />
+      <span className={`block h-full rounded-full transition-[width] ${slow ? 'duration-[1600ms] ease-out' : 'duration-700'} ${shine ? 'bar-shine' : ''} ${fill}`} style={{ width: `${Math.max(pct, value > 0 ? 3 : 0)}%` }} />
     </span>
   )
 }

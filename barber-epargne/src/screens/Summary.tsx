@@ -32,7 +32,8 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 const sum = (l: Entry[]) => l.reduce((a, e) => a + e.amount, 0)
 
 function savedOf(data: AppData, month: string, cur: string): number | null {
-  if (month >= cur) return null
+  // Le mois en cours compte déjà (ce qui est mis de côté jusqu'ici).
+  if (month > cur) return null
   const base = data.settings.savedBaseline
   // Mois couverts par le montant déjà coffré : pas de détail (le mois de la saisie : seulement la suite du mois).
   if (base && month < base.month) return null
